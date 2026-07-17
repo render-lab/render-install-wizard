@@ -1,0 +1,69 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Deterministic config E2E on every OS/arch: build the wizard, seed realistic
+  # tool configs, install MCP into all tools, and assert correctness, no-clobber,
+  # idempotency, and clean uninstall.
+  harness:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Run config E2E harness
+        run: bash test/e2e/harness.sh
+
+  # Full curl|sh bootstrap path per OS: publish a snapshot, serve it, and run
+  # scripts/agents.sh end-to-end (download -> checksum-verify -> install -> exec).
+  bootstrap:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Build snapshot artifacts
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+      - name: Run bootstrap E2E
+        run: DIST=dist bash test/e2e/bootstrap_check.sh
+
+  # Realistic Linux env: install real agents (Claude Code, OpenCode) + seed the
+  # opaque ones (Cursor, Codex), verify detection, then run the full harness.
+  realistic-docker:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build realistic E2E image
+        run: docker build -f test/e2e/Dockerfile -t render-wizard-e2e .
+      - name: Run realistic E2E (detection + harness)
+        run: docker run --rm render-wizard-e2e

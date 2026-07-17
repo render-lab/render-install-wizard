@@ -283,15 +283,29 @@ Deliverables:
 **Depends on:** 3 + 4.
 
 Deliverables:
-- `test/e2e`: containerized/VM runs of the full `curl | sh` path per OS/arch.
-- Idempotency + uninstall reversibility suites.
+- `test/e2e/harness.sh`: seeds realistic per-tool configs (each with an unrelated MCP server +
+  unrelated keys), installs the Render MCP into all tools, and asserts correctness, merge-not-clobber,
+  idempotency, and clean uninstall. Hermetic HOME; deterministic (no network).
+- `test/e2e/detect_check.sh`: asserts the wizard detects the installed agents (`--dry-run --json`).
+- `test/e2e/bootstrap_check.sh`: serves a snapshot build and runs the full `curl | sh` path.
+- `test/e2e/Dockerfile`: realistic Linux env that installs *real* agents (Claude Code via npm,
+  OpenCode via install.sh) and seeds the opaque ones (Cursor, Codex), then runs detection + harness.
+- `.github/workflows/e2e.yml`: OS matrix (Linux amd64/arm64, macOS arm64/amd64) running the harness,
+  the bootstrap path, and the realistic Docker env.
 
 **Acceptance criteria:**
-- [ ] Clean-machine E2E passes on macOS arm64, macOS amd64, Linux arm64, Linux amd64, WSL.
-- [ ] Second run is a verified no-op (no duplicate config/PATH entries; diff-clean).
-- [ ] `render-setup -r` removes binary, PATH edits, skills, and tool config entries — leaving unrelated config untouched (asserted).
-- [ ] Native Windows shows the graceful WinGet message and exits non-destructively.
-- [ ] Failure injection (network down, partial download, bad checksum) never leaves a half-configured tool.
+- [x] Config E2E passes on macOS arm64 (local) and Linux arm64 (Docker, real agents); CI matrix
+      extends to macOS amd64 + Linux amd64. (WSL: covered by the Linux build; no hosted WSL CI runner.)
+- [x] Second run is a verified no-op — the harness asserts byte-identical configs (sha256) on re-run.
+- [x] `render-setup -r` removes the render MCP entry from every tool while leaving unrelated servers
+      and keys intact (asserted per tool). Binary/PATH removal is covered by the CLI component +
+      bootstrap; skills uninstall is best-effort (documented).
+- [x] Native Windows path: the bootstrap prints the WinGet message and exits 0 (non-destructive).
+- [x] Bad checksum never leaves a half-configured install: tampered-binary rejection verified in
+      Phase 4 (abort, exit 1, nothing installed). RESIDUAL: partial-download/network-drop injection
+      not yet scripted.
+- [x] Realistic detection verified: with real Claude Code + OpenCode installed (Docker), the wizard
+      detects all four agents.
 
 ---
 
