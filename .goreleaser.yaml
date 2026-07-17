@@ -1,0 +1,60 @@
+# GoReleaser config for the render-setup wizard.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: render-setup
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: render-setup
+    main: ./cmd/render-setup
+    binary: render-setup
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # main.version is reported by `render-setup --version`.
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+# Publish raw binaries (not tarballs) so the bootstrap can download and chmod +x
+# directly. Names are version-less to match paths.ArtifactName and keep the
+# GitHub "latest" download URL stable.
+archives:
+  - id: binaries
+    formats:
+      - binary
+    name_template: "render-setup_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  github:
+    owner: render-oss
+    name: render-install-wizard
+  # Cut releases as drafts so a human can review assets before publishing.
+  draft: true
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"

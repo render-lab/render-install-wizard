@@ -253,11 +253,27 @@ Deliverables:
   resolves to the newest artifact + checksums) or update the script to match the real layout. This is
   a hard dependency for the end-to-end `curl | sh` path.
 
+**Decisions (locked in):**
+- **Binaries are hosted on GitHub Releases** (`github.com/render-oss/render-install-wizard/releases`),
+  published by GoReleaser. `render.com/agents.sh` still serves the *script*; only binaries live on
+  GitHub. (render.com could later proxy binary downloads for install analytics — future option.)
+- **Version-less asset names** (`render-setup_<os>_<arch>`, raw binaries via GoReleaser
+  `formats: [binary]`). This makes the `latest` URL stable: `latest` → GitHub's
+  `/releases/latest/download/<asset>` redirect; a pinned `RENDER_SETUP_VERSION=vX.Y.Z` →
+  `/releases/download/vX.Y.Z/<asset>`. The URL scheme is centralized in `internal/paths`
+  (`DownloadURL`/`ChecksumsURL`) and mirrored by `scripts/agents.sh`.
+- `render-setup --version` is stamped via `-ldflags -X main.version={{.Version}}`.
+
 **Acceptance criteria:**
-- [ ] A tagged release produces all four OS/arch artifacts + `checksums.txt`.
-- [ ] Checksums match artifacts; bootstrap (Phase 1A) verifies a real published artifact successfully.
-- [ ] `render-setup --version` matches the release tag.
-- [ ] `?version=vX` downloads the pinned artifact; unknown version errors clearly.
+- [x] A snapshot release produced all four OS/arch artifacts + `checksums.txt` (correct version-less
+      names). A tagged release does the same via `release.yml`.
+- [x] Checksums match artifacts; a full local bootstrap E2E (served over HTTP) downloaded,
+      **verified sha256, installed, updated PATH, and exec'd** the wizard; a tampered binary was
+      correctly rejected (exit 1, not installed).
+- [x] `render-setup --version` reports the injected version (verified on the built snapshot binary).
+- [x] Pinned `RENDER_SETUP_VERSION` downloads the tagged artifact; `latest` uses the GitHub redirect.
+- [x] Bug fixed during E2E: the bootstrap now probes that `/dev/tty` is *openable* (not just present)
+      before redirecting, so it no longer crashes in no-TTY environments (CI/agents/containers).
 
 ---
 

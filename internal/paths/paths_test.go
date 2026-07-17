@@ -9,20 +9,38 @@ import (
 
 func TestArtifactName(t *testing.T) {
 	tests := []struct {
-		name                  string
-		version, goos, goarch string
-		want                  string
+		name         string
+		goos, goarch string
+		want         string
 	}{
-		{"darwin arm64", "1.2.3", "darwin", "arm64", "render-setup_1.2.3_darwin_arm64"},
-		{"linux amd64", "0.1.0", "linux", "amd64", "render-setup_0.1.0_linux_amd64"},
-		{"windows appends exe", "1.0.0", "windows", "amd64", "render-setup_1.0.0_windows_amd64.exe"},
+		{"darwin arm64", "darwin", "arm64", "render-setup_darwin_arm64"},
+		{"linux amd64", "linux", "amd64", "render-setup_linux_amd64"},
+		{"windows appends exe", "windows", "amd64", "render-setup_windows_amd64.exe"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := ArtifactName(tc.version, tc.goos, tc.goarch); got != tc.want {
-				t.Errorf("ArtifactName(%q,%q,%q) = %q, want %q", tc.version, tc.goos, tc.goarch, got, tc.want)
+			if got := ArtifactName(tc.goos, tc.goarch); got != tc.want {
+				t.Errorf("ArtifactName(%q,%q) = %q, want %q", tc.goos, tc.goarch, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDownloadURL(t *testing.T) {
+	if got, want := DownloadURL("latest", "darwin", "arm64"),
+		ReleasesBaseURL+"/latest/download/render-setup_darwin_arm64"; got != want {
+		t.Errorf("DownloadURL(latest) = %q, want %q", got, want)
+	}
+	if got, want := DownloadURL("", "linux", "amd64"),
+		ReleasesBaseURL+"/latest/download/render-setup_linux_amd64"; got != want {
+		t.Errorf("DownloadURL(\"\") = %q, want %q", got, want)
+	}
+	if got, want := DownloadURL("v1.2.3", "linux", "arm64"),
+		ReleasesBaseURL+"/download/v1.2.3/render-setup_linux_arm64"; got != want {
+		t.Errorf("DownloadURL(v1.2.3) = %q, want %q", got, want)
+	}
+	if got, want := ChecksumsURL("v1.2.3"), ReleasesBaseURL+"/download/v1.2.3/checksums.txt"; got != want {
+		t.Errorf("ChecksumsURL(v1.2.3) = %q, want %q", got, want)
 	}
 }
 

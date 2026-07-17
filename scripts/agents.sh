@@ -70,7 +70,9 @@ main() {
 	}
 
 	# ---- configuration (env with defaults) ----
-	base_url="${RENDER_INSTALL_BASE_URL:-https://render.com}"
+	# Binaries are published to GitHub Releases; RENDER_INSTALL_BASE_URL points at
+	# the releases base and can be overridden (e.g. for a mirror or a local test).
+	base_url="${RENDER_INSTALL_BASE_URL:-https://github.com/render-oss/render-install-wizard/releases}"
 	base_url="${base_url%/}"
 	version="${RENDER_SETUP_VERSION:-latest}"
 	render_home="${RENDER_HOME:-${HOME}/.render}"
@@ -149,12 +151,17 @@ main() {
 		fi
 	}
 
-	# ---- artifact + URL layout (matches internal/paths.ArtifactName) ----
-	# ArtifactName: render-setup_<version>_<os>_<arch>; checksums: checksums.txt.
-	# Both are served under render.com/agents/download/<version>/.
-	artifact="render-setup_${version}_${os}_${arch}"
+	# ---- artifact + URL layout (mirrors internal/paths.DownloadURL) ----
+	# Version-less artifact name so the "latest" redirect URL is stable; the
+	# concrete version is carried by the release tag in the URL path. "latest"
+	# uses GitHub's latest-release redirect, any other value is a release tag.
+	artifact="render-setup_${os}_${arch}"
 	checksums_file="checksums.txt"
-	download_dir="${base_url}/agents/download/${version}"
+	if [ "${version}" = "latest" ]; then
+		download_dir="${base_url}/latest/download"
+	else
+		download_dir="${base_url}/download/${version}"
+	fi
 	binary_url="${download_dir}/${artifact}"
 	checksums_url="${download_dir}/${checksums_file}"
 
@@ -207,8 +214,13 @@ main() {
 	trap - EXIT
 
 	# ---- re-attach a TTY and hand off to the wizard, forwarding args ----
+	# When stdin is not a terminal (e.g. piped from `curl | sh`), reconnect it to
+	# the controlling terminal so the wizard can prompt. /dev/tty may EXIST but not
+	# be openable (no controlling terminal, as in CI/containers/agents), so probe
+	# that it can actually be opened before redirecting; otherwise run headless and
+	# let the wizard fall back to its non-interactive path.
 	info "Starting the Render setup wizard..."
-	if [ ! -t 0 ] && [ -e /dev/tty ]; then
+	if [ ! -t 0 ] && (exec 3</dev/tty) 2>/dev/null; then
 		exec "${target}" "$@" </dev/tty
 	else
 		exec "${target}" "$@"
