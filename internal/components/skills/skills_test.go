@@ -39,52 +39,56 @@ func lookPathFunc(available ...string) func(string) (string, error) {
 	}
 }
 
-func TestInstallPrefersRenderCLI(t *testing.T) {
+func argsEqual(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestInstallPrefersNpxNonInteractive(t *testing.T) {
 	rec := &recorder{}
 	c := &Component{
 		home:     t.TempDir(),
-		lookPath: lookPathFunc(render.CLIBinaryName, "npx"),
+		lookPath: lookPathFunc(render.CLIBinaryName, "npx"), // both present -> npx wins
 		run:      rec.run,
 	}
 	if err := c.Install(context.Background(), components.Options{}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if !rec.called {
-		t.Fatal("expected runner to be called")
+	if !rec.called || rec.name != "npx" {
+		t.Fatalf("name = %q, want npx", rec.name)
+	}
+	// --all + -g make this fully non-interactive (no prompts, global scope).
+	want := []string{"skills", "add", render.SkillsRepo, "--all", "-g"}
+	if !argsEqual(rec.args, want) {
+		t.Fatalf("args = %v, want %v", rec.args, want)
+	}
+	if render.SkillsRepo != "render-oss/skills" {
+		t.Fatalf("unexpected SkillsRepo %q", render.SkillsRepo)
+	}
+}
+
+func TestInstallFallsBackToRenderCLI(t *testing.T) {
+	rec := &recorder{}
+	c := &Component{
+		home:     t.TempDir(),
+		lookPath: lookPathFunc(render.CLIBinaryName), // no npx -> render CLI
+		run:      rec.run,
+	}
+	if err := c.Install(context.Background(), components.Options{}); err != nil {
+		t.Fatalf("Install: %v", err)
 	}
 	if rec.name != render.CLIBinaryName {
 		t.Fatalf("name = %q, want %q", rec.name, render.CLIBinaryName)
 	}
-	want := []string{"skills", "install"}
-	if len(rec.args) != len(want) || rec.args[0] != want[0] || rec.args[1] != want[1] {
-		t.Fatalf("args = %v, want %v", rec.args, want)
-	}
-}
-
-func TestInstallFallsBackToNpx(t *testing.T) {
-	rec := &recorder{}
-	c := &Component{
-		home:     t.TempDir(),
-		lookPath: lookPathFunc("npx"),
-		run:      rec.run,
-	}
-	if err := c.Install(context.Background(), components.Options{}); err != nil {
-		t.Fatalf("Install: %v", err)
-	}
-	if rec.name != "npx" {
-		t.Fatalf("name = %q, want npx", rec.name)
-	}
-	want := []string{"skills", "add", render.SkillsRepo}
-	if len(rec.args) != len(want) {
-		t.Fatalf("args = %v, want %v", rec.args, want)
-	}
-	for i := range want {
-		if rec.args[i] != want[i] {
-			t.Fatalf("args = %v, want %v", rec.args, want)
-		}
-	}
-	if render.SkillsRepo != "render-oss/skills" {
-		t.Fatalf("unexpected SkillsRepo %q", render.SkillsRepo)
+	if !argsEqual(rec.args, []string{"skills", "install"}) {
+		t.Fatalf("args = %v, want [skills install]", rec.args)
 	}
 }
 

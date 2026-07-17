@@ -52,6 +52,8 @@ jobs:
           args: release --snapshot --clean --skip=publish
       - name: Run bootstrap E2E
         run: DIST=dist bash test/e2e/bootstrap_check.sh
+      - name: Run failure-injection E2E
+        run: DIST=dist bash test/e2e/failure_check.sh
 
   # Realistic Linux env: install real agents (Claude Code, OpenCode) + seed the
   # opaque ones (Cursor, Codex), verify detection, then run the full harness.

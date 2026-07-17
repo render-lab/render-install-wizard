@@ -259,10 +259,10 @@ Deliverables:
       Next steps section (via `internal/render.PluginFor`), not as a delivery mode in the summary.
 - [x] Unknown manifest tool/component IDs (no compiled handler) are skipped with a recorded
       "skipped" result, never fatal (must-ignore-unknown; verified in orchestrator tests + smoke).
-- [x] Skills install won't hang in `-y`/no-TTY mode: the orchestrator's command runner leaves child
-      stdin unset (→ /dev/null), so a prompting installer gets EOF instead of blocking. RESIDUAL:
-      confirm the exact non-interactive flags for `render skills install` / `npx skills add` so it
-      selects all skills rather than erroring on EOF.
+- [x] Skills install is non-interactive: the primary path is `npx skills add render-oss/skills --all -g`
+      (`--all` = all skills to all detected agents without prompts; `-g` = global). Render CLI
+      (`render skills install`) is the fallback, with child stdin unset (→ /dev/null) as a belt-and-braces
+      against prompts.
 - [x] Retired the vestigial `internal/components/plugins` stub (plugins are next-step copy via
       `internal/render.PluginFor`, not a component).
 
@@ -329,9 +329,9 @@ Deliverables:
       unrelated servers/keys intact, asserted per tool) and intentionally does NOT remove the CLI or
       skills (avoids a misleading half-uninstall; stated in help text + summary).
 - [x] Native Windows path: the bootstrap prints the WinGet message and exits 0 (non-destructive).
-- [x] Bad checksum never leaves a half-configured install: tampered-binary rejection verified in
-      Phase 4 (abort, exit 1, nothing installed). RESIDUAL: partial-download/network-drop injection
-      not yet scripted.
+- [x] Failure injection never leaves a half-configured install: `test/e2e/failure_check.sh` proves the
+      bootstrap aborts (exit 1, nothing installed) on a missing binary asset (network error) and on a
+      corrupt/partial download (checksum mismatch). Wired into `e2e.yml`.
 - [x] Realistic detection verified: with real Claude Code + OpenCode installed (Docker), the wizard
       detects all four agents.
 
@@ -372,11 +372,11 @@ Deliverables:
    Today the wizard builds next-steps locally (`render.PluginFor` + static lines) rather than from the
    per-tool `.md`; wiring the wizard to consume Sanity next-steps is deferred.
 
-## Residuals to close (carried forward)
+## Residuals
 
-- Confirm the exact non-interactive flags for `render skills install` / `npx skills add` (hang risk
-  already eliminated via unset child stdin; "install all without prompting" needs the real flag).
-- Script a partial-download / network-drop failure-injection E2E (bad-checksum rejection is proven).
-- Choose and add a real `LICENSE` (placeholder today) before public launch.
-- Real (non-dry-run) install has been exercised in the Docker E2E for MCP config; a full clean-machine
-  install incl. CLI + skills network installs is best validated in the CI matrix.
+- ✅ Non-interactive skills flags — resolved (`npx skills add render-oss/skills --all -g`).
+- ✅ Failure-injection E2E — resolved (`test/e2e/failure_check.sh`, wired into `e2e.yml`).
+- ✅ `LICENSE` — resolved (Apache-2.0).
+- **Open** — a full clean-machine install (incl. CLI + skills *network* installs, non-dry-run) is best
+  validated in the CI matrix; local validation covered MCP config + the bootstrap flow.
+- **Open (frontend-owned)** — wire the wizard's next-steps to Sanity `/agents/*.md` (vs. local copy).

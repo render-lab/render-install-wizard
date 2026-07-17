@@ -68,21 +68,24 @@ func (c *Component) Detect(ctx context.Context) (bool, error) {
 
 // Install installs agent skills by delegating to the official installer.
 //
-// On a dry run it performs no side effects. Otherwise it prefers the Render CLI
-// (`render skills install`) when `render` resolves on PATH, falls back to
-// `npx skills add <SkillsRepo>` when `npx` is available, and returns an
-// actionable error when neither is present.
+// On a dry run it performs no side effects. Otherwise it prefers the `skills`
+// CLI via npx (the documented primary path) with fully non-interactive flags —
+// `--all` installs every skill to all detected agents without prompts, and `-g`
+// installs to the user (global) skills directory. It falls back to the Render
+// CLI's `render skills install` (>= 2.10) when npx isn't available; the runner
+// leaves child stdin unset (/dev/null), so any prompt there gets EOF rather than
+// hanging. It returns an actionable error when neither installer is present.
 func (c *Component) Install(ctx context.Context, opts components.Options) error {
 	if opts.DryRun {
 		return nil
 	}
+	if _, err := c.lookPath("npx"); err == nil {
+		return c.run(ctx, "npx", "skills", "add", render.SkillsRepo, "--all", "-g")
+	}
 	if _, err := c.lookPath(render.CLIBinaryName); err == nil {
 		return c.run(ctx, render.CLIBinaryName, "skills", "install")
 	}
-	if _, err := c.lookPath("npx"); err == nil {
-		return c.run(ctx, "npx", "skills", "add", render.SkillsRepo)
-	}
-	return errors.New("cannot install skills: install the Render CLI or Node/npx to add skills")
+	return errors.New("cannot install skills: install Node/npx or the Render CLI to add skills")
 }
 
 // Uninstall best-effort removes the universal skills directory.
