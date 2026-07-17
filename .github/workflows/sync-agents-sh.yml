@@ -1,0 +1,34 @@
+name: sync-agents-sh
+
+# Guard: the copy served by render.com (deploy/render-com/agents.sh) must stay
+# byte-identical to the source bootstrap (scripts/agents.sh). If they drift, the
+# frontend could serve a stale or divergent install script, so we fail the build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-vendored-copy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify deploy/render-com/agents.sh matches scripts/agents.sh
+        run: |
+          if ! diff -u scripts/agents.sh deploy/render-com/agents.sh; then
+            echo ""
+            echo "::error::deploy/render-com/agents.sh has drifted from scripts/agents.sh."
+            echo "The vendored copy served by render.com must be byte-identical to the source."
+            echo "Re-sync it with:"
+            echo ""
+            echo "    cp scripts/agents.sh deploy/render-com/agents.sh"
+            echo ""
+            echo "then commit the result."
+            exit 1
+          fi
+          echo "scripts/agents.sh and deploy/render-com/agents.sh are identical."

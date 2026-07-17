@@ -1,0 +1,13 @@
+# Codex configuration file
+# This top-of-file comment is intentionally present to document the
+# Phase-1 limitation: map-based editing does NOT preserve comments.
+model = "gpt-5"
+approval_policy = "on-request"
+
+[ui]
+theme = "dark"
+
+# An existing MCP server that must survive a Render merge untouched.
+[mcp_servers.acme-tools]
+command = "npx"
+args = ["-y", "@acme/mcp-server"]

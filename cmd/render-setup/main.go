@@ -1,56 +1,102 @@
 // Command render-setup installs the Render CLI, skills, and MCP into coding
-// agents. Phase 0 provides a placeholder entrypoint that prints a dry-run plan.
+// agents. In Phase 1 it only detects tools and collects the component selection
+// (interactively or not) and prints the resulting plan; it performs no installs.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/render-oss/render-install-wizard/internal/cliflags"
+	"github.com/render-oss/render-install-wizard/internal/detect"
+	"github.com/render-oss/render-install-wizard/internal/ids"
 	"github.com/render-oss/render-install-wizard/internal/logx"
-	"github.com/render-oss/render-install-wizard/internal/paths"
+	"github.com/render-oss/render-install-wizard/internal/wizard"
 )
 
 // version is the wizard version, overridden at build time via -ldflags.
 var version = "dev"
 
 func main() {
-	flags, err := cliflags.Parse(os.Args[1:])
+	os.Exit(run(os.Args[1:]))
+}
+
+// run parses flags and drives the Phase 1 selection flow, returning the process
+// exit code.
+func run(args []string) int {
+	flags, err := cliflags.Parse(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		return 2
 	}
 
 	if flags.ShowVersion {
 		fmt.Println(version)
-		os.Exit(0)
+		return 0
 	}
 
 	log := logx.New(os.Stdout, flags.JSON)
+	ctx := context.Background()
 
-	binaryPath, err := paths.BinaryPath()
+	// Best-effort tool detection: on error, proceed with no detected tools.
+	detected, err := detect.DetectTools(ctx)
 	if err != nil {
-		log.Errorf("resolve binary path: %v", err)
-		os.Exit(1)
+		log.Warnf("tool detection failed, continuing with none: %v", err)
+		detected = nil
 	}
 
-	// TODO(phase 1+): replace this dry-run plan with the real install flow.
-	log.Infof("render-setup %s (Phase 0 dry-run plan)", version)
-	log.Infof("binary path: %s", binaryPath)
-	log.Infof("default artifact: %s", paths.DefaultArtifactName(version))
-	log.Infof("agents script: %s", paths.AgentsScriptURL)
-	log.Infof("components: %s", joinOrNone(flags.Components))
-	log.Infof("agents: %s", joinOrNone(flags.Agents))
+	interactive := detect.DetectPlatform().HasTTY && !flags.Yes && !flags.JSON
 
-	if flags.DryRun {
-		log.Infof("dry-run enabled: no changes will be made")
+	var selection wizard.Selection
+	if interactive {
+		sel, confirmed, err := wizard.Run(ctx, detected)
+		if err != nil {
+			log.Errorf("wizard failed: %v", err)
+			return 1
+		}
+		if !confirmed {
+			log.Infof("cancelled")
+			return 0
+		}
+		selection = sel
+	} else {
+		selection = nonInteractiveSelection(log, flags, detected)
 	}
+
+	summary := wizard.Summary{Selection: selection, Tools: detected}
+	log.Infof("plan (selection only, no changes made): %s", summary.String())
+	log.Infof("this is Phase 1: render-setup collects the plan but does not install yet")
+	return 0
 }
 
-func joinOrNone(items []string) string {
-	if len(items) == 0 {
-		return "(none)"
+// nonInteractiveSelection resolves the component selection without a TTY. With no
+// --components flag it pre-checks all components (detect-then-default); otherwise
+// it narrows to the requested components, warning about unknown IDs.
+func nonInteractiveSelection(log *logx.Logger, flags *cliflags.Flags, detected []ids.ToolID) wizard.Selection {
+	if len(flags.Components) == 0 {
+		return wizard.PrecheckDefaults(detected)
 	}
-	return strings.Join(items, ", ")
+
+	valid := make(map[ids.ComponentID]bool, len(ids.AllComponents()))
+	for _, c := range ids.AllComponents() {
+		valid[c] = true
+	}
+
+	var chosen []ids.ComponentID
+	seen := make(map[ids.ComponentID]bool)
+	for _, name := range flags.Components {
+		id := ids.ComponentID(name)
+		if !valid[id] {
+			log.Warnf("ignoring unknown component: %s", name)
+			continue
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		chosen = append(chosen, id)
+	}
+
+	return wizard.Selection{Components: chosen}
 }

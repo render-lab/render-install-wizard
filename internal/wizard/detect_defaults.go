@@ -3,9 +3,11 @@ package wizard
 import "github.com/render-oss/render-install-wizard/internal/ids"
 
 // PrecheckDefaults computes the default selection given the detected tools,
-// following a "detect-then-default" strategy. It is currently a stub.
+// following the "detect-then-default" policy: every user-selectable component is
+// pre-checked regardless of which tools were detected, so a single confirmation
+// installs everything. The detected list is surfaced for transparency (see the
+// wizard View and Summary) but does not narrow the component selection.
 func PrecheckDefaults(detected []ids.ToolID) Selection {
 	_ = detected
-	// TODO(phase 1E): tailor defaults based on which tools were detected.
 	return DefaultSelection()
 }

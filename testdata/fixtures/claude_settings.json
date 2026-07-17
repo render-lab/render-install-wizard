@@ -1,0 +1,11 @@
+{
+  "model": "claude-sonnet",
+  "theme": "dark",
+  "permissions": {
+    "allow": ["Read", "Edit", "Bash(git status)"],
+    "deny": ["Bash(rm -rf /)"]
+  },
+  "telemetry": {
+    "enabled": false
+  }
+}

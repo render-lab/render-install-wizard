@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "acme-tools": {
+      "command": "npx",
+      "args": ["-y", "@acme/mcp-server"],
+      "env": {
+        "ACME_TOKEN": "keep-me-secret"
+      }
+    }
+  },
+  "editor.formatOnSave": true,
+  "workbench.colorTheme": "Default Dark Modern"
+}

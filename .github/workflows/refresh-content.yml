@@ -1,0 +1,61 @@
+name: Refresh embedded content
+
+# Snapshots the live Sanity-authored agent guides from render.com into the
+# embedded fallback directory (internal/content/embedded/) and opens a PR when
+# the copy has changed. This keeps the offline/air-gapped fallback tracking the
+# website over time. See docs/spec.md ("Content single-source-of-truth").
+
+on:
+  schedule:
+    # Every Monday at 08:00 UTC.
+    - cron: "0 8 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Snapshot render.com agent guides
+        env:
+          DEST: internal/content/embedded
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEST"
+
+          fetch() {
+            url="$1"
+            out="$2"
+            echo "Fetching $url -> $out"
+            curl -fsSL \
+              --retry 3 --retry-delay 2 --max-time 30 \
+              -H "Accept: text/markdown" \
+              "$url" -o "$out"
+          }
+
+          fetch "https://render.com/agents.md"          "$DEST/agents.md"
+          fetch "https://render.com/agents/claude.md"   "$DEST/claude.md"
+          fetch "https://render.com/agents/cursor.md"   "$DEST/cursor.md"
+          fetch "https://render.com/agents/codex.md"    "$DEST/codex.md"
+          fetch "https://render.com/agents/opencode.md" "$DEST/opencode.md"
+
+      - name: Create pull request on change
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(content): refresh embedded render.com agent guides"
+          title: "chore(content): refresh embedded render.com agent guides"
+          body: |
+            Automated snapshot of the live render.com agent guides into
+            `internal/content/embedded/`.
+
+            Triggered by the `refresh-content` workflow. Review the diff to
+            confirm the Sanity copy changes look correct before merging.
+          branch: chore/refresh-embedded-content
+          delete-branch: true
+          add-paths: |
+            internal/content/embedded/*.md

@@ -239,6 +239,11 @@ Deliverables:
 - `.goreleaser.yaml`: build matrix (darwin/linux × arm64/amd64), archive naming per Phase 0 contract.
 - `.github/workflows/release.yml`: tag-triggered build → artifacts + `checksums.txt` served separately.
 - `?version=` pinning support validated against real artifacts.
+- **Reconcile the download URL scheme with `scripts/agents.sh`.** The bootstrap currently assumes
+  `${BASE}/agents/download/<version>/<artifact>` + `/checksums.txt`, and a literal `latest` version
+  token. Phase 4 must either make the release hosting serve that layout (incl. a `latest` alias that
+  resolves to the newest artifact + checksums) or update the script to match the real layout. This is
+  a hard dependency for the end-to-end `curl | sh` path.
 
 **Acceptance criteria:**
 - [ ] A tagged release produces all four OS/arch artifacts + `checksums.txt`.
