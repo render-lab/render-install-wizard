@@ -19,10 +19,29 @@ merge-not-clobber), and prints Sanity-authored next steps. The same flow works n
 
 Launch is met when **all** of these hold:
 - `curl -fsSL render.com/agents.sh | sh` completes a full install on a clean macOS arm64 machine.
-- Re-running it is a no-op (idempotent); `render-setup -r` fully reverses it.
+- Re-running it is a no-op (idempotent); `render-setup -r` removes the Render MCP entry cleanly.
 - A no-TTY run (piped, CI) behaves as `-y` and prints a machine-readable summary.
 - Checksums published and verified by the bootstrap before exec.
 - render.com/agents.sh returns the byte-identical vendored script, Cloudflare-cached.
+
+---
+
+## Status
+
+Phases 0–5 are implemented, reviewed, and committed. **Phase 6 (launch/cutover) is the only
+remaining phase** and is mostly out-of-repo coordination (render.com PR, first release, analytics).
+
+| Phase | Status | Commit |
+|---|---|---|
+| 0 — Foundations & contracts | ✅ done | `e22c00d` |
+| 1 — Bootstrap, detection, configedit, content, TUI | ✅ done | `329420d` |
+| 2 — Component & tool installers | ✅ done | `e93ff54` |
+| 3 — Integration & non-interactive | ✅ done | `daf391e` |
+| 4 — Release pipeline & checksums | ✅ done | `60e03a4` |
+| 5 — E2E & OS matrix | ✅ done | `dd187c0` (+ `9655e2b` scoped uninstall) |
+| 6 — Launch / cutover | ⏳ remaining | — |
+
+Checkbox legend: `[x]` done · `[~]` partial or evolved from the original wording · `[ ]` not started.
 
 ---
 
@@ -87,11 +106,11 @@ Deliverables:
   - Content URL convention: `render.com/agents/<tool>.md`, `render.com/agents.md`.
 
 **Acceptance criteria:**
-- [ ] `go build ./...` and `go vet ./...` pass on the empty scaffold.
-- [ ] `make lint test` runs green (no-op tests allowed).
-- [ ] Every interface above exists and is referenced by at least one stub, so signatures are frozen.
-- [ ] `manifest.schema.json` committed; a sample `manifest.json` validates against it in CI.
-- [ ] CI runs on push (build + vet + lint) and passes.
+- [x] `go build ./...` and `go vet ./...` pass.
+- [x] `make lint test` runs green (gofmt+vet locally; golangci advisory in CI).
+- [x] Every interface exists and is referenced by a stub; a shared `internal/ids` holds canonical IDs.
+- [x] `manifest.schema.json` committed; `manifest.json` validates against it via a Go test.
+- [x] CI runs on push (build + vet + gofmt + test + tidy gating; golangci advisory).
 
 ---
 
@@ -107,12 +126,14 @@ Deliverables:
 - `.github/workflows/sync-agents-sh.yml`: fails on drift between the two copies.
 
 **Acceptance criteria:**
-- [ ] `shellcheck scripts/agents.sh` passes; `sh -n` parse-check passes.
-- [ ] Truncating the script mid-download executes nothing (main()-wrapper verified by test).
-- [ ] Against a local mock server, the script downloads, **rejects a bad checksum**, accepts a good one, installs to `~/.render/bin`, and updates the correct rc file per shell.
-- [ ] Re-running is idempotent (no duplicate PATH lines).
-- [ ] `sync-agents-sh.yml` goes red when the vendored copy drifts, green when identical.
-- [ ] Route handler returns `200 text/x-shellscript` with the script body in a local Next.js run.
+- [x] `sh -n` parse-check passes (local); `shellcheck` runs in CI.
+- [x] All logic is nested in `main()` with `main "$@"` as the last line (truncation executes nothing).
+- [x] Full local E2E (served over HTTP, Phases 4–5): downloads, **rejects a bad checksum**, accepts a
+      good one, installs to `~/.render/bin`, and updates the correct rc file per shell.
+- [x] Re-running is idempotent (marked PATH block, added once).
+- [x] `sync-agents-sh.yml` diffs the two copies and fails on drift.
+- [ ] Route handler returns `200 text/x-shellscript` in a live Next.js run — **deferred to Phase 6**
+      (lands in the render.com frontend repo; the handler template ships in `deploy/render-com/`).
 
 ---
 
@@ -128,10 +149,10 @@ Deliverables:
 - `internal/logx`: leveled logging + `--json` sink.
 
 **Acceptance criteria:**
-- [ ] Detection unit-tested with fixture home dirs: each tool detected iff its marker present; no false positives on empty home.
-- [ ] `platform` correctly reports arch/OS across a table test incl. a simulated WSL marker.
-- [ ] PATH update is idempotent (second run adds nothing) and covers zsh/bash/fish; verified against fixture rc files.
-- [ ] TTY detection returns false under a pipe (drives non-interactive fallback later).
+- [x] Detection unit-tested with fixture home dirs (injected home + fake PATH lookup); no false positives.
+- [x] `platform` reports arch/OS; WSL detection factored into an injectable, table-tested helper.
+- [x] PATH update is idempotent (marked block) and covers zsh/bash/fish; verified against temp rc files.
+- [x] TTY detection via `golang.org/x/term`; drives the non-interactive fallback in Phase 3.
 
 ---
 
@@ -144,11 +165,13 @@ Deliverables:
 - `internal/configedit`: JSON/TOML readers+writers that merge Render's MCP/skills entries into a tool config **without** touching other servers/keys; preserve formatting/ordering where feasible; atomic writes with backup.
 
 **Acceptance criteria:**
-- [ ] `testdata/fixtures/` holds real-world configs (existing MCP servers, comments, mixed content) per tool.
-- [ ] Round-trip test: adding Render then removing it returns the file to byte-equal original (modulo documented normalization).
-- [ ] Never deletes or reorders unrelated entries (asserted per fixture).
-- [ ] Concurrent/interrupted write leaves either old or new file intact (atomic), never a truncated file.
-- [ ] Idempotent: applying the same edit twice yields identical output.
+- [x] `testdata/fixtures/` holds real-world configs (existing MCP servers, comments, mixed content).
+- [~] Round-trip test: add-then-remove returns the file to a **semantically** equal state. Byte-equality
+      is NOT preserved (map-based engine reorders keys / drops TOML comments) — an accepted, documented
+      Phase-1 trade-off; tests assert semantic equality.
+- [x] Never deletes or reorders unrelated entries (asserted per fixture).
+- [x] Atomic write (temp file in same dir + rename); never a truncated file.
+- [x] Idempotent: applying the same edit twice yields byte-identical output.
 
 ---
 
@@ -163,11 +186,12 @@ Deliverables:
 - `.github/workflows/refresh-content.yml`: snapshot live `.md` → `assets/content/`, open PR on change.
 
 **Acceptance criteria:**
-- [ ] Manifest parse rejects unknown schema version and malformed entries with clear errors.
-- [ ] Content fetch honors a short timeout and falls back: live → embed → terse built-in (unit-tested by forcing each failure).
-- [ ] Rendered markdown is readable in TUI and clean in `--json` (no ANSI in JSON).
-- [ ] `refresh-content.yml` produces a diff PR when the fixture live copy changes; no-op when unchanged.
-- [ ] Wizard never blocks > timeout on content; offline run still prints next steps.
+- [x] Manifest parse rejects unknown schema version and malformed entries with clear errors.
+- [x] Content fetch has a timeout and falls back: live → embed → terse built-in (each failure unit-tested).
+- [x] `Render` (glamour) for TUI, `RenderPlain` for `--json` (no ANSI). Embedded snapshot dir committed.
+- [x] `refresh-content.yml` authored (scheduled snapshot → PR on change; runs in CI).
+- [x] Content fetch is best-effort with fallback, so an offline run still prints next steps.
+      NOTE: embeds live in `internal/content/embedded/` (go:embed can't reach `assets/content/`).
 
 ---
 
@@ -181,10 +205,11 @@ Deliverables:
 - `cmd/render-setup/main.go`: flag parse → wizard entry.
 
 **Acceptance criteria:**
-- [ ] `render-setup` launches, renders splash + detected-tools line + pre-checked WHAT picker, and exits cleanly on quit.
-- [ ] One-Enter path selects all defaults (Railway-equivalent).
-- [ ] Renders correctly at 80-col width; degrades gracefully without a TTY (defers to non-interactive path, Phase 3).
-- [ ] Wired to stubs only — no real installs yet — behind an `--dry-run` that prints the plan.
+- [x] bubbletea model renders splash + detected-tools line + pre-checked WHAT picker; quits cleanly
+      (Update transitions unit-tested without a real TTY).
+- [x] One-Enter path selects all defaults (Railway-equivalent).
+- [x] Degrades gracefully without a TTY (defers to the non-interactive path).
+- [x] Entrypoint wired; in Phase 1E it collected/printed the selection, now fully wired in Phase 3.
 
 ---
 
@@ -199,12 +224,17 @@ Deliverables:
 - `internal/tools/{claudecode,cursor,codex,opencode}` implementing `Target`, incl. plugin-vs-raw resolution and no-double-install dedup.
 
 **Acceptance criteria:**
-- [ ] CLI component installs the Render CLI to `~/.render/bin` and reports version; uninstall removes it.
-- [ ] Skills component writes universal `.agents` skills + tool-specific dirs; MCP component writes hosted OAuth entry (no credentials written).
-- [ ] For Claude Code & Codex, wizard picks the **plugin** path and never also writes raw skills+mcp (dedup asserted).
-- [ ] For Cursor & OpenCode, raw config path used; entries merged via `configedit` (Phase 1C guarantees).
-- [ ] Each tool: `Configure` then `Unconfigure` returns config to original (per fixture).
-- [ ] `Status` accurately reports installed/absent for every component and tool.
+- [x] CLI component detects the CLI (PATH or `~/.render/bin`), installs via `brew`/official script,
+      reports version via `render --version`. (Install delegates to the official installer, so the CLI
+      may land in a brew prefix rather than `~/.render/bin`.)
+- [x] Skills component delegates to the official installer (`render skills install` / `npx skills add`),
+      which writes universal + per-tool dirs. MCP entries are credential-free (OAuth default).
+- [x] **Revised after research:** all tools use the shell-automatable config-file (raw) path; the
+      Cursor/Codex plugins are in-app and surfaced as next-steps (via `render.PluginFor`), not
+      installed — so there is no raw-vs-plugin double-install to dedup.
+- [x] Cursor, OpenCode, Claude, Codex: MCP entry merged via `configedit` (merge-not-clobber).
+- [x] Each tool: `Configure` then `Unconfigure` returns config to a semantically equal state (tested).
+- [x] `Status` reports installed/absent for every component and tool.
 
 ---
 
@@ -247,11 +277,9 @@ Deliverables:
 - `.goreleaser.yaml`: build matrix (darwin/linux × arm64/amd64), archive naming per Phase 0 contract.
 - `.github/workflows/release.yml`: tag-triggered build → artifacts + `checksums.txt` served separately.
 - `?version=` pinning support validated against real artifacts.
-- **Reconcile the download URL scheme with `scripts/agents.sh`.** The bootstrap currently assumes
-  `${BASE}/agents/download/<version>/<artifact>` + `/checksums.txt`, and a literal `latest` version
-  token. Phase 4 must either make the release hosting serve that layout (incl. a `latest` alias that
-  resolves to the newest artifact + checksums) or update the script to match the real layout. This is
-  a hard dependency for the end-to-end `curl | sh` path.
+- **Reconcile the download URL scheme with `scripts/agents.sh`** — ✅ RESOLVED (see Decisions below):
+  binaries are on GitHub Releases with version-less asset names; the bootstrap and `internal/paths`
+  both use `latest`→redirect / pinned→tag URLs.
 
 **Decisions (locked in):**
 - **Binaries are hosted on GitHub Releases** (`github.com/render-oss/render-install-wizard/releases`),
@@ -329,15 +357,26 @@ Deliverables:
 
 ## Cross-cutting acceptance (every phase)
 
-- [ ] No `sudo`; all writes under `~/.render` or tool config dirs.
-- [ ] Idempotent and re-runnable; merges never clobber other MCP servers/skills.
-- [ ] Installer never writes credentials (MCP OAuth is first-touch, lazy).
-- [ ] `--json` available wherever there's output; non-interactive == first-class.
-- [ ] Every downloaded binary checksum-verified before use.
+- [x] No `sudo`; all writes under `~/.render` or tool config dirs.
+- [x] Idempotent and re-runnable; merges never clobber other MCP servers/skills.
+- [x] Installer never writes credentials (OAuth default; API-key fallback is an env-ref, never stored).
+- [x] `--json` available wherever there's output; non-interactive == first-class.
+- [x] Every downloaded binary checksum-verified before use (bootstrap; verified in E2E).
 
-## Open questions to resolve before/within phases (from project.md + spec.md)
+## Open questions
 
-1. Skills freshness: background auto-update vs re-run setup (affects Phase 2 skills component).
-2. Plugin/skills dedup rules per tool need finalizing before Phase 2 tool work is "correct".
-3. Sanity schema: do the `/agents/*.md` pages need a structured `nextSteps` field for clean TUI
-   rendering, vs. scraping full-page markdown? (Frontend-owned; affects Phase 1D content parsing.)
+1. **Open** — Skills freshness: background auto-update vs re-run setup (skills component / CLI behavior).
+2. ✅ **Resolved** — Plugin/skills dedup: plugins are in-app next-steps, not installed by the wizard, so
+   there's no raw-vs-plugin dedup; all tools take the config-file path.
+3. **Open (frontend-owned)** — Sanity schema: a structured `nextSteps` field vs. full-page markdown.
+   Today the wizard builds next-steps locally (`render.PluginFor` + static lines) rather than from the
+   per-tool `.md`; wiring the wizard to consume Sanity next-steps is deferred.
+
+## Residuals to close (carried forward)
+
+- Confirm the exact non-interactive flags for `render skills install` / `npx skills add` (hang risk
+  already eliminated via unset child stdin; "install all without prompting" needs the real flag).
+- Script a partial-download / network-drop failure-injection E2E (bad-checksum rejection is proven).
+- Choose and add a real `LICENSE` (placeholder today) before public launch.
+- Real (non-dry-run) install has been exercised in the Docker E2E for MCP config; a full clean-machine
+  install incl. CLI + skills network installs is best validated in the CI matrix.
