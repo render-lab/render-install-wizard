@@ -297,9 +297,9 @@ Deliverables:
 - [x] Config E2E passes on macOS arm64 (local) and Linux arm64 (Docker, real agents); CI matrix
       extends to macOS amd64 + Linux amd64. (WSL: covered by the Linux build; no hosted WSL CI runner.)
 - [x] Second run is a verified no-op — the harness asserts byte-identical configs (sha256) on re-run.
-- [x] `render-setup -r` removes the render MCP entry from every tool while leaving unrelated servers
-      and keys intact (asserted per tool). Binary/PATH removal is covered by the CLI component +
-      bootstrap; skills uninstall is best-effort (documented).
+- [x] `render-setup -r` is scoped: it removes the Render MCP entry from every target tool (leaving
+      unrelated servers/keys intact, asserted per tool) and intentionally does NOT remove the CLI or
+      skills (avoids a misleading half-uninstall; stated in help text + summary).
 - [x] Native Windows path: the bootstrap prints the WinGet message and exits 0 (non-destructive).
 - [x] Bad checksum never leaves a half-configured install: tampered-binary rejection verified in
       Phase 4 (abort, exit 1, nothing installed). RESIDUAL: partial-download/network-drop injection

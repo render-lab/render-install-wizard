@@ -123,18 +123,27 @@ func TestExecuteDryRunPerformsNoSideEffects(t *testing.T) {
 	}
 }
 
-func TestExecuteUninstallReverseOrder(t *testing.T) {
+func TestExecuteUninstallOnlyUnconfiguresTools(t *testing.T) {
 	var log []string
 	reg := fullRegistry(&log)
 	plan := Plan{
-		Components: ids.AllComponents(),
-		Tools:      []ids.ToolID{ids.ToolCursor},
+		Components: ids.AllComponents(), // ignored on uninstall
+		Tools:      []ids.ToolID{ids.ToolCursor, ids.ToolCodex},
 		Options:    Options{Uninstall: true},
 	}
-	reg.Execute(context.Background(), plan)
-	want := []string{"uninstall:mcp", "uninstall:skills", "uninstall:cli", "unconfigure:cursor"}
-	if !eq(log, want) {
-		t.Fatalf("call log = %v, want %v", log, want)
+	res := reg.Execute(context.Background(), plan)
+
+	// Scoped uninstall: only tool MCP entries are removed; components untouched.
+	if !eq(log, []string{"unconfigure:cursor", "unconfigure:codex"}) {
+		t.Fatalf("uninstall touched components or wrong order: %v", log)
+	}
+	if len(res.Components) != 0 {
+		t.Errorf("uninstall reported components: %+v", res.Components)
+	}
+	for _, s := range res.Tools {
+		if s.Action != ActionRemoved {
+			t.Errorf("tool %s action = %s, want removed", s.ID, s.Action)
+		}
 	}
 }
 

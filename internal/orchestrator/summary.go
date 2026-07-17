@@ -31,11 +31,11 @@ func (r Result) Summary() string {
 	title := "Render setup complete"
 	switch {
 	case r.DryRun && r.Uninstall:
-		title = "Render uninstall plan (dry run)"
+		title = "Render MCP removal plan (dry run)"
 	case r.DryRun:
 		title = "Render setup plan (dry run)"
 	case r.Uninstall:
-		title = "Render uninstall complete"
+		title = "Render MCP removed from your tools"
 	}
 	b.WriteString(title)
 	b.WriteString("\n")
@@ -69,7 +69,11 @@ func writeStep(b *strings.Builder, s StepResult) {
 // returns nothing meaningful for an uninstall beyond a single confirmation line.
 func NextSteps(plan Plan) []string {
 	if plan.Options.Uninstall {
-		return []string{"Removed Render configuration. Re-run the installer any time to set it back up."}
+		return []string{
+			"Removed the Render MCP entry from the targeted tools; other MCP servers were left intact.",
+			"Note: the Render CLI and agent skills (if installed) are left in place — remove those manually if you want.",
+			"Re-run the installer any time to set Render back up.",
+		}
 	}
 
 	var steps []string

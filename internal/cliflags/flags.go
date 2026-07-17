@@ -19,7 +19,8 @@ type Flags struct {
 	NoLogin bool
 	// JSON emits machine-readable JSON logs.
 	JSON bool
-	// Uninstall removes previously installed artifacts.
+	// Uninstall removes the Render MCP entry from configured tools. It does not
+	// remove the CLI or skills.
 	Uninstall bool
 	// ShowVersion prints the version and exits.
 	ShowVersion bool
@@ -52,8 +53,8 @@ func Parse(args []string) (*Flags, error) {
 	fs.BoolVar(&f.Yes, "y", false, "accept all prompts")
 	fs.BoolVar(&f.Yes, "yes", false, "accept all prompts")
 
-	fs.BoolVar(&f.Uninstall, "r", false, "uninstall previously installed artifacts")
-	fs.BoolVar(&f.Uninstall, "uninstall", false, "uninstall previously installed artifacts")
+	fs.BoolVar(&f.Uninstall, "r", false, "remove the Render MCP entry from configured tools (leaves the CLI and skills in place)")
+	fs.BoolVar(&f.Uninstall, "uninstall", false, "remove the Render MCP entry from configured tools (leaves the CLI and skills in place)")
 
 	var components string
 	fs.StringVar(&components, "components", "", "comma-separated components to install (cli,skills,mcp)")

@@ -132,29 +132,34 @@ func DefaultRegistry() *Registry {
 // Execute runs the plan and returns a structured Result. It never returns an
 // error: individual step failures are recorded and execution continues, so a
 // single misbehaving tool can't abort the whole run. Unknown IDs are skipped.
+//
+// Uninstall is deliberately scoped: it only removes the Render MCP entry from
+// each target tool. The CLI and agent skills are left in place (removing them is
+// best-effort and would make -r a misleading half-uninstall), so components are
+// not touched on an uninstall run.
 func (r *Registry) Execute(ctx context.Context, plan Plan) Result {
 	res := Result{DryRun: plan.Options.DryRun, Uninstall: plan.Options.Uninstall}
+	if plan.Options.Uninstall {
+		res.Tools = r.executeTools(ctx, plan)
+		return res
+	}
 	res.Components = r.executeComponents(ctx, plan)
 	res.Tools = r.executeTools(ctx, plan)
 	return res
 }
 
-// executeComponents acts on the selected components in dependency order (CLI,
-// then skills, then MCP), reversed for uninstall so the CLI is removed last.
+// executeComponents installs the selected components in dependency order (CLI,
+// then skills, then MCP). It is only used for installs; uninstall does not touch
+// components.
 func (r *Registry) executeComponents(ctx context.Context, plan Plan) []StepResult {
 	selected := make(map[ids.ComponentID]bool, len(plan.Components))
 	for _, c := range plan.Components {
 		selected[c] = true
 	}
 
-	order := ids.AllComponents()
-	if plan.Options.Uninstall {
-		order = reverseComponents(order)
-	}
-
 	var out []StepResult
 	acted := make(map[ids.ComponentID]bool)
-	for _, id := range order {
+	for _, id := range ids.AllComponents() {
 		if !selected[id] {
 			continue
 		}
@@ -177,17 +182,8 @@ func (r *Registry) executeComponents(ctx context.Context, plan Plan) []StepResul
 	return out
 }
 
-// runComponent installs or uninstalls one component, honoring dry run.
+// runComponent installs one component, honoring dry run.
 func (r *Registry) runComponent(ctx context.Context, id ids.ComponentID, inst components.Installer, opts Options) StepResult {
-	if opts.Uninstall {
-		if opts.DryRun {
-			return StepResult{ID: string(id), Action: ActionPlanned, Detail: "would uninstall"}
-		}
-		if err := inst.Uninstall(ctx); err != nil {
-			return StepResult{ID: string(id), Action: ActionFailed, Detail: err.Error()}
-		}
-		return StepResult{ID: string(id), Action: ActionRemoved}
-	}
 	if opts.DryRun {
 		return StepResult{ID: string(id), Action: ActionPlanned, Detail: "would install"}
 	}
@@ -250,13 +246,4 @@ func (r *Registry) runTool(ctx context.Context, id ids.ToolID, target tools.Targ
 func (r *Registry) Known(tool ids.ToolID) bool {
 	_, ok := r.tools[tool]
 	return ok
-}
-
-// reverseComponents returns a reversed copy of the component slice.
-func reverseComponents(in []ids.ComponentID) []ids.ComponentID {
-	out := make([]ids.ComponentID, len(in))
-	for i, v := range in {
-		out[len(in)-1-i] = v
-	}
-	return out
 }

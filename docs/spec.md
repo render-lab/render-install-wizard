@@ -222,3 +222,8 @@ Decisions (locked in for Phase 2):
   `PreferredDelivery: plugin` framing for Claude/Codex.
 - Render-specific facts (MCP URL/name, auth mode, per-tool config paths, universal skills dir,
   skills repo, plugin next-step references, CLI download) live in one package: `internal/render`.
+- **Uninstall (`-r`) is scoped to MCP config removal.** It removes the Render MCP entry from each
+  target tool (merge-not-clobber delete — the fiddly bit users can't easily undo by hand) and
+  intentionally does NOT remove the CLI or agent skills. A half-working uninstall (skills dirs
+  aren't fully tracked; a brew-installed CLI isn't ours to remove) would mislead more than help, so
+  `-r` does the reliable thing and says so in its help text and summary.
