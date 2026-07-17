@@ -227,6 +227,11 @@ Deliverables:
 - [ ] Summary lists per-tool result as "Cursor ✓", "Claude Code ✓ (via plugin)", etc.
 - [ ] Unknown manifest tool/component IDs (no compiled handler) are skipped with a logged warning,
       never fatal (must-ignore-unknown; keeps old binaries working against newer manifests).
+- [ ] Skills install runs non-interactively in `-y`/no-TTY mode. `render skills install` /
+      `npx skills add render-oss/skills` can prompt for tool selection; the orchestrator must pass
+      the right non-interactive flags (or feed input) so agent/CI runs never hang.
+- [ ] Remove or repurpose the now-vestigial `internal/components/plugins` stub (plugins are surfaced
+      as next-step copy via `internal/render.PluginFor`, not installed as a component).
 
 ---
 

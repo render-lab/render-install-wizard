@@ -192,3 +192,33 @@ Consequences:
   registry exists (Phase 3).
 
 This resolves open question about schema-enum vs. forward-compat: **closed schema + must-ignore-unknown runtime.**
+
+## Per-tool install facts (researched from render.com/agents/*.md, Phase 2)
+
+The wizard writes config via the shell-automatable **config-file path** for every tool (this is what
+`internal/configedit` exists for). The MCP server is `https://mcp.render.com/mcp`, name `render`.
+
+| Tool | MCP config file | Format / shape |
+|---|---|---|
+| Claude Code | `~/.claude.json` | JSON `mcpServers.render` = `{type:"http", url}` (also `claude mcp add`) |
+| Cursor | `~/.cursor/mcp.json` | JSON `mcpServers.render` = `{type:"http", url}` |
+| Codex | `~/.codex/config.toml` | TOML `[mcp_servers.render]` `url = …` |
+| OpenCode | `~/.config/opencode/opencode.json` | JSON `mcp.render` = `{type:"remote", url, enabled:true}` |
+
+Decisions (locked in for Phase 2):
+- **Auth = OAuth (assumed live imminently).** We write **credential-free, URL-only** MCP entries;
+  the tool does browser sign-in on first use. This keeps "installer never touches credentials."
+  The exact OAuth config shapes aren't published yet (guides still show API-key), so the URL-only
+  forms above are provisional. **API-key is the centralized fallback:** an `AuthMode` in
+  `internal/render` flips every tool's writer to add `Authorization: Bearer ${RENDER_API_KEY}`
+  (env-ref, never a stored secret; OpenCode uses `{env:RENDER_API_KEY}`). One switch, all tools.
+- **Skills: delegate to the official installer** — `render skills install` when the CLI (≥2.10) is
+  present, else `npx skills add render-oss/skills` (auto-detects tools, writes per-tool + universal
+  dirs). Repo: `github.com/render-oss/skills`.
+- **Plugins are NOT shell-automatable for Cursor/Codex** (in-app `/add-plugin render` and the Codex
+  plugin library, respectively). The wizard uses the config-file path and **surfaces the plugin as
+  recommended next-step copy**. OpenCode's plugin (`install.sh`) and Claude's `claude mcp add` are
+  shell-automatable and may be used where selected. This supersedes the earlier
+  `PreferredDelivery: plugin` framing for Claude/Codex.
+- Render-specific facts (MCP URL/name, auth mode, per-tool config paths, universal skills dir,
+  skills repo, plugin next-step references, CLI download) live in one package: `internal/render`.
