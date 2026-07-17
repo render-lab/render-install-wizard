@@ -1,0 +1,42 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+    - unconvert
+
+linters-settings:
+  goimports:
+    local-prefixes: github.com/render-oss/render-install-wizard
+  revive:
+    rules:
+      - name: exported
+        disabled: false
+  errcheck:
+    # Ignoring errors from stdout/stderr printing is idiomatic and not worth handling.
+    exclude-functions:
+      - fmt.Print
+      - fmt.Printf
+      - fmt.Println
+      - fmt.Fprint
+      - fmt.Fprintf
+      - fmt.Fprintln
+
+issues:
+  exclude-rules:
+    # Stubs during early phases will have unused params / not-implemented bodies.
+    - path: _test\.go
+      linters:
+        - errcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,0 +1,6 @@
+TODO: choose a license before first public release.
+
+This repository is intended to be public and auditable ("read it before you pipe it"),
+so the bootstrap script and wizard source should ship under an OSI-approved license
+(e.g. MIT or Apache-2.0). Confirm the correct license with the Render team and replace
+this file before Phase 6 (launch).

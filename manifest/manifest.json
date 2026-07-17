@@ -1,0 +1,52 @@
+{
+  "version": "1",
+  "wizard": {
+    "minVersion": "1.0.0"
+  },
+  "components": [
+    {
+      "id": "cli",
+      "name": "Render CLI",
+      "default": true,
+      "contentURL": "https://render.com/agents.md"
+    },
+    {
+      "id": "skills",
+      "name": "Agent skills",
+      "default": true,
+      "contentURL": "https://render.com/agents.md"
+    },
+    {
+      "id": "mcp",
+      "name": "Render MCP",
+      "default": true,
+      "contentURL": "https://render.com/agents.md"
+    }
+  ],
+  "tools": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "delivery": "plugin",
+      "contentURL": "https://render.com/agents/claude.md"
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "delivery": "raw",
+      "contentURL": "https://render.com/agents/cursor.md"
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "delivery": "plugin",
+      "contentURL": "https://render.com/agents/codex.md"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "delivery": "raw",
+      "contentURL": "https://render.com/agents/opencode.md"
+    }
+  ]
+}

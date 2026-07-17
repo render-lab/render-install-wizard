@@ -1,0 +1,19 @@
+# Binaries (build artifacts only; not the cmd/render-setup source dir)
+/dist/
+/bin/
+/render-setup
+*.exe
+
+# Test / coverage
+*.out
+coverage.*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local env
+.env
+.env.*

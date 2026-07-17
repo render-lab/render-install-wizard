@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://render.com/schemas/manifest.schema.json",
+  "title": "Render Install Wizard Manifest",
+  "type": "object",
+  "required": ["version", "components", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": "1" },
+    "wizard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minVersion": { "type": "string" }
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "enum": ["cli", "skills", "mcp"] },
+          "name": { "type": "string" },
+          "default": { "type": "boolean" },
+          "contentURL": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "delivery"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "enum": ["claude-code", "cursor", "codex", "opencode"] },
+          "name": { "type": "string" },
+          "delivery": { "enum": ["raw", "plugin"] },
+          "contentURL": { "type": "string", "format": "uri" }
+        }
+      }
+    }
+  }
+}
