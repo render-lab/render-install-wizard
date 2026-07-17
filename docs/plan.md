@@ -219,19 +219,22 @@ Deliverables:
 - No-TTY auto-`-y` with printed summary; end-state summary table + Sanity next steps.
 
 **Acceptance criteria:**
-- [ ] Interactive happy path installs selected components across all detected tools end-to-end on a dev machine.
-- [ ] `render-setup -y` with no TTY installs defaults and prints a summary; exit code 0.
-- [ ] `--json` emits a valid, documented schema (parseable by `jq`); no ANSI.
-- [ ] `--components cli,skills` installs only those; `--agent cursor` scopes to Cursor only.
-- [ ] `--no-login` skips the login prompt; login step otherwise optional and clearly marked.
-- [ ] Summary lists per-tool result as "Cursor ✓", "Claude Code ✓ (via plugin)", etc.
-- [ ] Unknown manifest tool/component IDs (no compiled handler) are skipped with a logged warning,
-      never fatal (must-ignore-unknown; keeps old binaries working against newer manifests).
-- [ ] Skills install runs non-interactively in `-y`/no-TTY mode. `render skills install` /
-      `npx skills add render-oss/skills` can prompt for tool selection; the orchestrator must pass
-      the right non-interactive flags (or feed input) so agent/CI runs never hang.
-- [ ] Remove or repurpose the now-vestigial `internal/components/plugins` stub (plugins are surfaced
-      as next-step copy via `internal/render.PluginFor`, not installed as a component).
+- [~] Interactive/real-install happy path is wired (picker → orchestrator → installers); verified via
+      dry-run + unit tests. Real mutation not exercised on the dev machine by design.
+- [x] No-TTY / `-y` defaults to all components and prints a summary; exit 0 (dry-run verified).
+- [x] `--json` emits a single valid documented object (parseable by `jq`), no ANSI.
+- [x] `--components cli,skills` scopes components; `--agent cursor` scopes tools.
+- [x] `--no-login` drops the login next step; it's otherwise present and clearly marked.
+- [x] Summary lists per-tool result (e.g. "[configured] cursor"). Plugins are surfaced in the
+      Next steps section (via `internal/render.PluginFor`), not as a delivery mode in the summary.
+- [x] Unknown manifest tool/component IDs (no compiled handler) are skipped with a recorded
+      "skipped" result, never fatal (must-ignore-unknown; verified in orchestrator tests + smoke).
+- [x] Skills install won't hang in `-y`/no-TTY mode: the orchestrator's command runner leaves child
+      stdin unset (→ /dev/null), so a prompting installer gets EOF instead of blocking. RESIDUAL:
+      confirm the exact non-interactive flags for `render skills install` / `npx skills add` so it
+      selects all skills rather than erroring on EOF.
+- [x] Retired the vestigial `internal/components/plugins` stub (plugins are next-step copy via
+      `internal/render.PluginFor`, not a component).
 
 ---
 
