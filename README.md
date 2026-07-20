@@ -55,12 +55,9 @@ checksums; `RENDER_SETUP_VERSION=vX.Y.Z` pins a version (default: latest).
 
 ## Documentation
 
-- [`docs/project.md`](docs/project.md) — problem statement and intent
-- [`docs/spec.md`](docs/spec.md) — architecture and design decisions
-- [`docs/plan.md`](docs/plan.md) — phased workback plan with status
-- [`docs/RELEASE.md`](docs/RELEASE.md) — release & launch/cutover checklist
-- [`docs/release-plan.md`](docs/release-plan.md) — what's left to launch
-- [`docs/windows-support.md`](docs/windows-support.md) — native Windows path (not started)
+- [`docs/SPEC.md`](docs/SPEC.md) — problem, architecture, design decisions, and status
+- [`docs/RELEASE.md`](docs/RELEASE.md) — what's left to launch + release runbook + rollback
+- [`docs/FUTURE.md`](docs/FUTURE.md) — not-started / future work (incl. native Windows)
 
 ## Development
 

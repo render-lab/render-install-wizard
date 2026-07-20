@@ -16,7 +16,7 @@ The only missing route is:
 
 - `GET /agents.sh` → **currently 404**
 
-That 404 is the exact "install.sh 404" fragility called out in `docs/project.md`.
+That 404 is the exact "install.sh 404" fragility called out in `docs/SPEC.md`.
 Adding one route handler makes the documented one-liner work:
 
 ```bash
