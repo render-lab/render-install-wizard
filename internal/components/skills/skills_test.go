@@ -5,9 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/render-oss/render-install-wizard/internal/components"
+	"github.com/render-oss/render-install-wizard/internal/ids"
 	"github.com/render-oss/render-install-wizard/internal/render"
 )
 
@@ -58,20 +60,65 @@ func TestInstallPrefersNpxNonInteractive(t *testing.T) {
 		lookPath: lookPathFunc(render.CLIBinaryName, "npx"), // both present -> npx wins
 		run:      rec.run,
 	}
+	// Unscoped run (no Agents): all skills, all detected agents.
 	if err := c.Install(context.Background(), components.Options{}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
 	if !rec.called || rec.name != "npx" {
 		t.Fatalf("name = %q, want npx", rec.name)
 	}
-	// --all + -g make this fully non-interactive (no prompts, global scope).
-	want := []string{"skills", "add", render.SkillsRepo, "--all", "-g"}
+	// Pinned package (-y skills@<ver>) + --all + -g: non-interactive, global.
+	want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--all", "-g"}
 	if !argsEqual(rec.args, want) {
 		t.Fatalf("args = %v, want %v", rec.args, want)
 	}
-	if render.SkillsRepo != "render-oss/skills" {
-		t.Fatalf("unexpected SkillsRepo %q", render.SkillsRepo)
+	// F05: the installer package must be pinned to an exact version, not "latest".
+	if render.SkillsCLISpec == "skills" || !strings.Contains(render.SkillsCLISpec, "@") {
+		t.Fatalf("SkillsCLISpec %q is not version-pinned", render.SkillsCLISpec)
 	}
+}
+
+// TestInstallScopedTargetsOnlyNamedAgents guards F02: an explicit --agent scope
+// must produce an installer invocation limited to those agents (never --all).
+func TestInstallScopedTargetsOnlyNamedAgents(t *testing.T) {
+	t.Run("single agent", func(t *testing.T) {
+		rec := &recorder{}
+		c := &Component{
+			home:     t.TempDir(),
+			lookPath: lookPathFunc("npx"),
+			run:      rec.run,
+		}
+		err := c.Install(context.Background(), components.Options{Agents: []ids.ToolID{ids.ToolCursor}})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-g", "-y"}
+		if rec.name != "npx" || !argsEqual(rec.args, want) {
+			t.Fatalf("got %s %v, want npx %v", rec.name, rec.args, want)
+		}
+		for _, a := range rec.args {
+			if a == "--all" {
+				t.Fatal("scoped install must not pass --all")
+			}
+		}
+	})
+
+	t.Run("multiple agents", func(t *testing.T) {
+		rec := &recorder{}
+		c := &Component{
+			home:     t.TempDir(),
+			lookPath: lookPathFunc("npx"),
+			run:      rec.run,
+		}
+		err := c.Install(context.Background(), components.Options{Agents: []ids.ToolID{ids.ToolCursor, ids.ToolCodex}})
+		if err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-a", "codex", "-g", "-y"}
+		if !argsEqual(rec.args, want) {
+			t.Fatalf("args = %v, want %v", rec.args, want)
+		}
+	})
 }
 
 func TestInstallFallsBackToRenderCLI(t *testing.T) {
@@ -81,14 +128,62 @@ func TestInstallFallsBackToRenderCLI(t *testing.T) {
 		lookPath: lookPathFunc(render.CLIBinaryName), // no npx -> render CLI
 		run:      rec.run,
 	}
+	// Unscoped fallback is allowed (the CLI installs for all detected agents).
 	if err := c.Install(context.Background(), components.Options{}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	if rec.name != render.CLIBinaryName {
-		t.Fatalf("name = %q, want %q", rec.name, render.CLIBinaryName)
+	// F04: fully non-interactive invocation, via the resolved absolute path.
+	if rec.name != "/usr/bin/"+render.CLIBinaryName {
+		t.Fatalf("name = %q, want resolved absolute render path", rec.name)
 	}
-	if !argsEqual(rec.args, []string{"skills", "install"}) {
-		t.Fatalf("args = %v, want [skills install]", rec.args)
+	want := []string{"skills", "install", "--confirm", "--scope", "user", "-o", "text"}
+	if !argsEqual(rec.args, want) {
+		t.Fatalf("args = %v, want %v", rec.args, want)
+	}
+}
+
+// TestInstallFallbackPrefersOwnedAbsolutePath guards F04: the fallback executes
+// the wizard-owned CLI (~/.render/bin/render) by absolute path in preference to
+// whatever a possibly-stale PATH resolves.
+func TestInstallFallbackPrefersOwnedAbsolutePath(t *testing.T) {
+	home := t.TempDir()
+	owned := filepath.Join(home, ".render", "bin", render.CLIBinaryName)
+	if err := os.MkdirAll(filepath.Dir(owned), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(owned, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec := &recorder{}
+	c := &Component{
+		home:     home,
+		lookPath: lookPathFunc(render.CLIBinaryName), // PATH also resolves render, elsewhere
+		run:      rec.run,
+	}
+	if err := c.Install(context.Background(), components.Options{}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if rec.name != owned {
+		t.Fatalf("name = %q, want wizard-owned absolute path %q", rec.name, owned)
+	}
+}
+
+// TestInstallScopedFailsClosedWithoutNpx guards F02: when a scope is requested
+// but only the non-scopable Render CLI fallback is available, installation must
+// fail closed rather than modify unselected agents.
+func TestInstallScopedFailsClosedWithoutNpx(t *testing.T) {
+	rec := &recorder{}
+	c := &Component{
+		home:     t.TempDir(),
+		lookPath: lookPathFunc(render.CLIBinaryName), // no npx, render present
+		run:      rec.run,
+	}
+	err := c.Install(context.Background(), components.Options{Agents: []ids.ToolID{ids.ToolCursor}})
+	if err == nil {
+		t.Fatal("expected fail-closed error for scoped install without npx")
+	}
+	if rec.called {
+		t.Fatal("runner must not be called when failing closed")
 	}
 }
 

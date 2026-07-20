@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/render-oss/render-install-wizard/internal/ids"
@@ -126,6 +127,94 @@ func TestConfigureMergeNotClobber(t *testing.T) {
 	}
 	if _, ok := servers[render.MCPServerName].(map[string]any); !ok {
 		t.Errorf("render entry not added: %#v", servers)
+	}
+}
+
+// TestConfigurePreservesExistingSchemaAndLargeInts guards F09: editing an
+// existing config must not overwrite a user's $schema and must not corrupt
+// large integers elsewhere in the file.
+func TestConfigurePreservesExistingSchemaAndLargeInts(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{
+  "$schema": "https://example.com/custom-schema.json",
+  "bigId": 9007199254740993,
+  "mcp": {}
+}`
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "https://example.com/custom-schema.json") {
+		t.Error("F09: user's $schema was overwritten")
+	}
+	if strings.Contains(s, render.OpenCodeSchemaURL) {
+		t.Error("F09: wizard replaced an existing $schema with its own")
+	}
+	if !strings.Contains(s, "9007199254740993") {
+		t.Errorf("F09: large integer lost precision:\n%s", s)
+	}
+	if !strings.Contains(s, render.MCPServerURL) {
+		t.Error("render entry not written")
+	}
+}
+
+// TestConfigureEditsJsoncActiveFile guards F10: when opencode.jsonc exists it is
+// the file OpenCode reads, so the wizard must edit it (preserving comments and
+// trailing commas) rather than creating an inactive opencode.json.
+func TestConfigureEditsJsoncActiveFile(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jsoncPath := filepath.Join(dir, "opencode.jsonc")
+	existing := `{
+  // user's preferred theme
+  "theme": "dark",
+  "mcp": {
+    "other": {"type": "remote", "url": "https://example.com/mcp", "enabled": true},
+  }
+}`
+	if err := os.WriteFile(jsoncPath, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	raw, err := os.ReadFile(jsoncPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, "// user's preferred theme") {
+		t.Error("F10: comment not preserved in edited .jsonc")
+	}
+	if !strings.Contains(s, render.MCPServerURL) {
+		t.Error("render entry not written to the active .jsonc file")
+	}
+	if !strings.Contains(s, `"other"`) {
+		t.Error("sibling server clobbered")
+	}
+	// No inactive duplicate must be created.
+	if _, err := os.Stat(filepath.Join(dir, "opencode.json")); !os.IsNotExist(err) {
+		t.Errorf("F10: inactive opencode.json was created (stat err=%v)", err)
 	}
 }
 

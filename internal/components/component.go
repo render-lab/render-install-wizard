@@ -47,6 +47,12 @@ type Options struct {
 	DryRun bool
 	// Version pins a specific version to install; an empty string means latest.
 	Version string
+	// Agents restricts installation to a specific set of coding agents. An empty
+	// slice means the run is unscoped: the component installs for all detected
+	// agents (the default). A non-empty slice is an explicit user scope (from
+	// --agent) that components must honor — e.g. the skills installer targets
+	// only these agents instead of "all detected".
+	Agents []ids.ToolID
 }
 
 // Installer is the contract every component implementation must satisfy.

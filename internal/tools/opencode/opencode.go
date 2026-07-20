@@ -1,14 +1,16 @@
 // Package opencode implements the tools.Target contract for OpenCode.
 //
-// OpenCode stores its config (including MCP servers) in a JSON file at
-// ~/.config/opencode/opencode.json. The wizard writes (merge-not-clobber) a
-// single "render" entry under the "mcp" key via internal/configedit so that any
-// user-defined MCP servers and unrelated keys are preserved.
+// OpenCode stores its config (including MCP servers) in ~/.config/opencode/ as
+// either opencode.json or opencode.jsonc (JSONC: comments + trailing commas).
+// OpenCode loads both and lets .jsonc override .json, so the wizard edits the
+// .jsonc form when it exists and otherwise .json. It writes a single "render"
+// entry under the "mcp" key via internal/configedit, which edits the file
+// surgically so user-defined MCP servers, unrelated keys, comments, and
+// formatting are all preserved.
 package opencode
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,55 +69,77 @@ func (t *Tool) Detect(ctx context.Context) (bool, error) {
 // copy elsewhere rather than being written here.
 func (t *Tool) PreferredDelivery() ids.Delivery { return ids.DeliveryRaw }
 
+// configPath resolves the OpenCode config file to edit: the highest-precedence
+// existing file (opencode.jsonc, then opencode.json), or the .json form to
+// create when neither exists (OpenCode reads both; .json needs no JSONC
+// features). The bool reports whether the resolved file already exists.
+func (t *Tool) configPath() (path string, exists bool) {
+	candidates := render.OpenCodeConfigFiles(t.home)
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c, true
+		}
+	}
+	return candidates[len(candidates)-1], false
+}
+
 // Configure configures the selected components into OpenCode.
 //
 // When the selection does not include the MCP component this is a no-op (skills
-// are handled globally, not per-tool here). Otherwise it merges the Render MCP
-// entry into ~/.config/opencode/opencode.json without clobbering existing
-// servers.
+// are handled globally, not per-tool here). Otherwise it writes the Render MCP
+// entry into the active config file (opencode.jsonc if present, else
+// opencode.json), replacing any prior render entry and preserving other servers,
+// unrelated keys, and comments/formatting.
 func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !slices.Contains(sel.Components, ids.ComponentMCP) {
 		return nil
 	}
-	path, ok := render.MCPConfigPath(t.ID(), t.home)
-	if !ok {
-		return fmt.Errorf("opencode: no MCP config path for home %q", t.home)
+	if t.home == "" {
+		return fmt.Errorf("opencode: cannot resolve config path for empty home")
 	}
-	patch, err := t.mcpPatch()
-	if err != nil {
-		return fmt.Errorf("opencode: build MCP patch: %w", err)
+	path, exists := t.configPath()
+	// Seed OpenCode's $schema only when creating a brand-new file; never modify
+	// an existing file's $schema (the user or OpenCode owns that value).
+	if !exists {
+		if err := configedit.SetJSONValue(path, render.OpenCodeSchemaURL, "$schema"); err != nil {
+			return fmt.Errorf("opencode: initialize config %s: %w", path, err)
+		}
 	}
-	if err := configedit.MergeJSONFile(path, patch); err != nil {
+	if err := configedit.SetJSONValue(path, t.mcpEntry(), "mcp", render.MCPServerName); err != nil {
 		return fmt.Errorf("opencode: write MCP config: %w", err)
 	}
 	return nil
 }
 
 // Unconfigure removes the Render MCP entry from OpenCode's config, leaving any
-// other MCP servers and unrelated keys intact. Removing from a missing file is
-// a no-op.
+// other MCP servers, unrelated keys, and comments intact. It removes the entry
+// from every existing config file (both .json and .jsonc) so no shadowed copy is
+// left behind; a missing file is a no-op.
 func (t *Tool) Unconfigure(ctx context.Context) error {
-	path, ok := render.MCPConfigPath(t.ID(), t.home)
-	if !ok {
-		return fmt.Errorf("opencode: no MCP config path for home %q", t.home)
+	if t.home == "" {
+		return fmt.Errorf("opencode: cannot resolve config path for empty home")
 	}
-	if err := configedit.DeleteJSONPath(path, "mcp", render.MCPServerName); err != nil {
-		return fmt.Errorf("opencode: remove MCP config: %w", err)
+	for _, path := range render.OpenCodeConfigFiles(t.home) {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+		if err := configedit.DeleteJSONPath(path, "mcp", render.MCPServerName); err != nil {
+			return fmt.Errorf("opencode: remove MCP config from %s: %w", path, err)
+		}
 	}
 	return nil
 }
 
-// mcpPatch builds the JSON merge patch for OpenCode's opencode.json:
+// mcpEntry builds the Render MCP server entry written to mcp.render:
 //
-//	{"$schema":"https://opencode.ai/config.json",
-//	 "mcp":{"render":{"type":"remote","url":<MCPServerURL>,"enabled":true}}}
+//	{"type":"remote","url":<MCPServerURL>,"enabled":true}
 //
-// In API-key auth mode a "headers" object with an Authorization Bearer header is
-// added under the render entry. OpenCode uses the "{env:VAR}" interpolation form
-// (not the shell "$VAR" form from render.AuthorizationHeader), so the reference
-// is built from render.APIKeyEnvVar directly; it is an env-ref, never a stored
-// secret.
-func (t *Tool) mcpPatch() ([]byte, error) {
+// It is written wholesale (replacing any prior render entry). In API-key auth
+// mode a "headers" object with an Authorization Bearer header is added; OpenCode
+// uses the "{env:VAR}" interpolation form (not the shell "$VAR" form), so the
+// reference is built from render.APIKeyEnvVar directly — an env-ref, never a
+// stored secret.
+func (t *Tool) mcpEntry() map[string]any {
 	entry := map[string]any{
 		"type":    "remote",
 		"url":     render.MCPServerURL,
@@ -126,13 +150,7 @@ func (t *Tool) mcpPatch() ([]byte, error) {
 			"Authorization": fmt.Sprintf("Bearer {env:%s}", render.APIKeyEnvVar),
 		}
 	}
-	patch := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"mcp": map[string]any{
-			render.MCPServerName: entry,
-		},
-	}
-	return json.Marshal(patch)
+	return entry
 }
 
 var _ tools.Target = (*Tool)(nil)

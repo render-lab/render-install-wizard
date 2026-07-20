@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 
-	toml "github.com/pelletier/go-toml/v2"
-
 	"github.com/render-oss/render-install-wizard/internal/configedit"
 	"github.com/render-oss/render-install-wizard/internal/ids"
 	"github.com/render-oss/render-install-wizard/internal/render"
@@ -66,7 +64,7 @@ func (t *Tool) PreferredDelivery() ids.Delivery { return ids.DeliveryRaw }
 //
 // It only acts on the MCP component: skills are handled globally by the official
 // skills installer, so a Selection without ids.ComponentMCP is a no-op that
-// creates no file. When MCP is selected it merges Render's [mcp_servers.render]
+// creates no file. When MCP is selected it writes Render's [mcp_servers.render]
 // table into ~/.codex/config.toml, preserving any unrelated configuration.
 func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !hasComponent(sel, ids.ComponentMCP) {
@@ -76,12 +74,8 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !ok {
 		return fmt.Errorf("codex: no MCP config path for home %q", t.home)
 	}
-	patch, err := t.mcpPatch()
-	if err != nil {
-		return err
-	}
-	if err := configedit.MergeTOMLFile(path, patch); err != nil {
-		return fmt.Errorf("codex: merge MCP config: %w", err)
+	if err := configedit.SetTOMLValue(path, t.mcpServer(), "mcp_servers", render.MCPServerName); err != nil {
+		return fmt.Errorf("codex: write MCP config: %w", err)
 	}
 	return nil
 }
@@ -100,27 +94,19 @@ func (t *Tool) Unconfigure(ctx context.Context) error {
 	return nil
 }
 
-// mcpPatch builds the TOML merge patch that adds Render's MCP server table.
-// OAuth writes a credential-free URL-only table; API-key mode adds an
-// http_headers Authorization referencing an environment variable (never a
-// secret). The patch is constructed as a Go map and marshaled to TOML bytes.
-func (t *Tool) mcpPatch() ([]byte, error) {
+// mcpServer builds the Render [mcp_servers.render] table value. It is written
+// wholesale (replacing any prior render table), so switching auth modes never
+// leaves a stale http_headers Authorization behind. OAuth writes a
+// credential-free URL-only table; API-key mode adds an http_headers
+// Authorization referencing an environment variable (never a secret).
+func (t *Tool) mcpServer() map[string]any {
 	server := map[string]any{
 		"url": render.MCPServerURL,
 	}
 	if value, present := render.AuthorizationHeader(t.auth); present {
 		server["http_headers"] = map[string]any{"Authorization": value}
 	}
-	patch := map[string]any{
-		"mcp_servers": map[string]any{
-			render.MCPServerName: server,
-		},
-	}
-	out, err := toml.Marshal(patch)
-	if err != nil {
-		return nil, fmt.Errorf("codex: marshal MCP patch: %w", err)
-	}
-	return out, nil
+	return server
 }
 
 // hasComponent reports whether the selection includes the given component.

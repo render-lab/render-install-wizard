@@ -1,7 +1,11 @@
 package cli
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -61,6 +65,47 @@ func writeBin(t *testing.T, home string) string {
 		t.Fatalf("write bin: %v", err)
 	}
 	return path
+}
+
+// makeCLIZip builds an in-memory zip containing a single file with the given
+// name and content, mirroring the official CLI release archive layout.
+func makeCLIZip(t *testing.T, name string, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(name)
+	if err != nil {
+		t.Fatalf("zip create: %v", err)
+	}
+	if _, err := w.Write(content); err != nil {
+		t.Fatalf("zip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zip close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// fakeCLIFetch returns a fetch func that serves canned release metadata for the
+// GitHub API URL, a SHA256SUMS document (with the correct digest) for the
+// checksums URL, and a zip archive for the download URL, appending each
+// requested URL to urls so tests can assert what was fetched.
+func fakeCLIFetch(t *testing.T, tag, goos, goarch string, binContent []byte, urls *[]string) func(context.Context, string) ([]byte, error) {
+	t.Helper()
+	zipBytes := makeCLIZip(t, "cli_"+tag, binContent)
+	sum := sha256.Sum256(zipBytes)
+	sums := hex.EncodeToString(sum[:]) + "  " + render.CLIArchiveName(tag, goos, goarch) + "\n"
+	return func(_ context.Context, url string) ([]byte, error) {
+		*urls = append(*urls, url)
+		switch {
+		case strings.Contains(url, "api.github.com"):
+			return []byte(`{"tag_name":"` + tag + `"}`), nil
+		case strings.Contains(url, "SHA256SUMS"):
+			return []byte(sums), nil
+		default:
+			return zipBytes, nil
+		}
+	}
 }
 
 func TestDetect(t *testing.T) {
@@ -135,35 +180,116 @@ func TestInstall(t *testing.T) {
 		}
 	})
 
-	t.Run("brew absent falls back to curl", func(t *testing.T) {
-		rec := &recorder{}
-		c := &Component{home: t.TempDir(), lookPath: lookPathNone(), run: rec.run}
+	t.Run("brew absent downloads and verifies release into owned dir", func(t *testing.T) {
+		home := t.TempDir()
+		var urls []string
+		var pathDir string
+		content := []byte("#!/bin/sh\necho render\n")
+		c := &Component{
+			home:       home,
+			goos:       "linux",
+			goarch:     "amd64",
+			lookPath:   lookPathNone(),
+			fetch:      fakeCLIFetch(t, "v9.9.9", "linux", "amd64", content, &urls),
+			ensurePath: func(binDir string) error { pathDir = binDir; return nil },
+		}
 		if err := c.Install(ctx, components.Options{}); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		if len(rec.calls) != 1 {
-			t.Fatalf("expected 1 call, got %v", rec.calls)
+
+		// The binary lands in the wizard-owned dir, executable.
+		dest := filepath.Join(home, ".render", "bin", render.CLIBinaryName)
+		got, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("read installed binary: %v", err)
 		}
-		call := rec.calls[0]
-		if call.name != "sh" {
-			t.Fatalf("expected sh, got %q", call.name)
+		if !bytes.Equal(got, content) {
+			t.Fatalf("installed content = %q, want %q", got, content)
 		}
-		if len(call.args) != 2 || call.args[0] != "-c" {
-			t.Fatalf("expected sh -c <script>, got %v", call.args)
+		info, err := os.Stat(dest)
+		if err != nil {
+			t.Fatal(err)
 		}
-		script := call.args[1]
-		for _, sub := range []string{"curl", render.CLIInstallScriptURL, "| sh"} {
-			if !strings.Contains(script, sub) {
-				t.Fatalf("expected script to contain %q, got %q", sub, script)
-			}
+		if info.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("binary not executable, mode=%v", info.Mode())
+		}
+
+		// PATH wiring targets the wizard-owned bin dir.
+		if want := filepath.Dir(dest); pathDir != want {
+			t.Fatalf("ensurePath got %q, want %q", pathDir, want)
+		}
+
+		// Resolved latest via the API, fetched the linux/amd64 archive, and
+		// verified it against the release's immutable-versioned checksums.
+		if len(urls) != 3 || !strings.Contains(urls[0], "api.github.com") {
+			t.Fatalf("expected API, archive, checksums fetches, got %v", urls)
+		}
+		if !strings.Contains(urls[1], "download/v9.9.9/cli_9.9.9_linux_amd64.zip") {
+			t.Fatalf("archive URL = %q, want versioned cli_9.9.9_linux_amd64.zip", urls[1])
+		}
+		if !strings.Contains(urls[2], "download/v9.9.9/cli_9.9.9_SHA256SUMS") {
+			t.Fatalf("checksums URL = %q, want versioned SHA256SUMS", urls[2])
 		}
 	})
 
-	t.Run("runner error is wrapped", func(t *testing.T) {
-		rec := &recorder{err: errors.New("boom")}
-		c := &Component{home: t.TempDir(), lookPath: lookPathNone(), run: rec.run}
-		err := c.Install(ctx, components.Options{})
-		if err == nil {
+	t.Run("pinned version skips API lookup", func(t *testing.T) {
+		home := t.TempDir()
+		var urls []string
+		c := &Component{
+			home:       home,
+			goos:       "darwin",
+			goarch:     "arm64",
+			lookPath:   lookPathNone(),
+			fetch:      fakeCLIFetch(t, "v1.2.3", "darwin", "arm64", []byte("bin"), &urls),
+			ensurePath: func(string) error { return nil },
+		}
+		if err := c.Install(ctx, components.Options{Version: "1.2.3"}); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		// Archive then checksums, no API call.
+		if len(urls) != 2 {
+			t.Fatalf("expected archive + checksums fetch (no API), got %v", urls)
+		}
+		if !strings.Contains(urls[0], "download/v1.2.3/cli_1.2.3_darwin_arm64.zip") {
+			t.Fatalf("archive URL = %q", urls[0])
+		}
+	})
+
+	t.Run("checksum mismatch is rejected", func(t *testing.T) {
+		home := t.TempDir()
+		c := &Component{
+			home:     home,
+			goos:     "linux",
+			goarch:   "amd64",
+			lookPath: lookPathNone(),
+			fetch: func(_ context.Context, url string) ([]byte, error) {
+				if strings.Contains(url, "SHA256SUMS") {
+					return []byte("deadbeef  " + render.CLIArchiveName("1.0.0", "linux", "amd64") + "\n"), nil
+				}
+				return makeCLIZip(t, "cli_v1.0.0", []byte("tampered")), nil
+			},
+			ensurePath: func(string) error { return nil },
+		}
+		err := c.Install(ctx, components.Options{Version: "1.0.0"})
+		if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+			t.Fatalf("expected checksum mismatch error, got %v", err)
+		}
+		// A rejected archive must never be written to disk.
+		if _, statErr := os.Stat(filepath.Join(home, ".render", "bin", render.CLIBinaryName)); !os.IsNotExist(statErr) {
+			t.Fatalf("binary should not be installed on checksum failure, stat err=%v", statErr)
+		}
+	})
+
+	t.Run("fetch error is wrapped", func(t *testing.T) {
+		c := &Component{
+			home:       t.TempDir(),
+			goos:       "linux",
+			goarch:     "amd64",
+			lookPath:   lookPathNone(),
+			fetch:      func(context.Context, string) ([]byte, error) { return nil, errors.New("boom") },
+			ensurePath: func(string) error { return nil },
+		}
+		if err := c.Install(ctx, components.Options{Version: "1.0.0"}); err == nil {
 			t.Fatal("expected error")
 		}
 	})

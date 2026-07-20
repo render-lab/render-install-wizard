@@ -7,6 +7,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 
@@ -20,6 +22,14 @@ import (
 // version is the wizard version, overridden at build time via -ldflags.
 var version = "dev"
 
+// runWizard and detectHasTTY are indirections over the interactive picker and
+// TTY detection so tests can inject failures/among TTY states without a real
+// terminal. Production wiring points at the real implementations.
+var (
+	runWizard    = wizard.Run
+	detectHasTTY = func() bool { return detect.DetectPlatform().HasTTY }
+)
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -29,6 +39,11 @@ func main() {
 func run(args []string) int {
 	flags, err := cliflags.Parse(args)
 	if err != nil {
+		// -h/--help is a successful, non-mutating path: usage has already been
+		// printed by the flag package, so exit 0 without treating it as an error.
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
@@ -46,7 +61,17 @@ func run(args []string) int {
 		warnings = append(warnings, "no supported coding agents detected; components that require a tool (MCP) won't be configured anywhere")
 	}
 
-	selection, cancelled := resolveSelection(ctx, flags, tools, &warnings)
+	selection, cancelled, err := resolveSelection(ctx, flags, tools, &warnings)
+	if err != nil {
+		// Fail closed: an interactive session that errored never completed the
+		// consent flow, so we must not proceed to install the defaults. Surface
+		// the cause and exit nonzero before any plan is built or executed.
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "warning: "+w)
+		}
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		return 1
+	}
 	if cancelled {
 		fmt.Println("Cancelled. No changes made.")
 		return 0
@@ -59,6 +84,9 @@ func run(args []string) int {
 			DryRun:    flags.DryRun,
 			Uninstall: flags.Uninstall,
 			NoLogin:   flags.NoLogin,
+			// An explicit --agent restricts the run to those agents; forward that
+			// scope so component installers (skills) don't touch other agents.
+			ScopedAgents: len(flags.Agents) > 0,
 		},
 	}
 	result := reg.Execute(ctx, plan)
@@ -103,25 +131,30 @@ func resolveTools(ctx context.Context, flags *cliflags.Flags, reg *orchestrator.
 // resolveSelection determines which components to act on. An explicit
 // --components flag wins (unknown IDs are warned and dropped). Otherwise, when a
 // TTY is present for a fresh install, the interactive picker runs; in all other
-// cases (no TTY, -y, --json, or uninstall) it defaults to all components.
-func resolveSelection(ctx context.Context, flags *cliflags.Flags, tools []ids.ToolID, warnings *[]string) (wizard.Selection, bool) {
+// documented non-interactive cases (no TTY, -y, --json, or uninstall) it
+// defaults to all components.
+//
+// The bool return reports user cancellation (a clean, no-change exit). The error
+// return is reserved for an interactive picker that failed to run: rather than
+// silently treating that as consent for the full default install, it is surfaced
+// so the caller fails closed.
+func resolveSelection(ctx context.Context, flags *cliflags.Flags, tools []ids.ToolID, warnings *[]string) (wizard.Selection, bool, error) {
 	if len(flags.Components) > 0 {
-		return componentsFromFlags(flags.Components, warnings), false
+		return componentsFromFlags(flags.Components, warnings), false, nil
 	}
 
-	interactive := !flags.Uninstall && !flags.Yes && !flags.JSON && detect.DetectPlatform().HasTTY
+	interactive := !flags.Uninstall && !flags.Yes && !flags.JSON && detectHasTTY()
 	if interactive {
-		sel, confirmed, err := wizard.Run(ctx, tools)
+		sel, confirmed, err := runWizard(ctx, tools)
 		if err != nil {
-			*warnings = append(*warnings, fmt.Sprintf("interactive picker failed, using defaults: %v", err))
-			return wizard.DefaultSelection(), false
+			return wizard.Selection{}, false, fmt.Errorf("interactive setup failed; no changes made: %w", err)
 		}
 		if !confirmed {
-			return wizard.Selection{}, true
+			return wizard.Selection{}, true, nil
 		}
-		return sel, false
+		return sel, false, nil
 	}
-	return wizard.DefaultSelection(), false
+	return wizard.DefaultSelection(), false, nil
 }
 
 // componentsFromFlags maps --components values to known component IDs, warning

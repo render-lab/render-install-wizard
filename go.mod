@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/tailscale/hujson v0.0.0-20260718110524-10d7940d4c87
 	golang.org/x/term v0.45.0
 )
 

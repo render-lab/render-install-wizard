@@ -34,6 +34,12 @@ type Options struct {
 	Uninstall bool
 	// NoLogin suppresses the "run render login" next step.
 	NoLogin bool
+	// ScopedAgents is true when the user explicitly restricted the run to a
+	// subset of agents (via --agent). When true, Plan.Tools is that explicit
+	// scope and is forwarded to component installers so they only touch the
+	// selected agents. When false the run is unscoped (all detected agents) and
+	// components fall back to their "all detected" behavior.
+	ScopedAgents bool
 }
 
 // Plan describes what to do: which components to act on, which tools to target,
@@ -169,7 +175,7 @@ func (r *Registry) executeComponents(ctx context.Context, plan Plan) []StepResul
 			out = append(out, StepResult{ID: string(id), Action: ActionSkipped, Detail: "unsupported component (no compiled handler)"})
 			continue
 		}
-		out = append(out, r.runComponent(ctx, id, inst, plan.Options))
+		out = append(out, r.runComponent(ctx, id, inst, plan))
 	}
 
 	// Any selected IDs not in the canonical set are unknown: skip them.
@@ -182,12 +188,19 @@ func (r *Registry) executeComponents(ctx context.Context, plan Plan) []StepResul
 	return out
 }
 
-// runComponent installs one component, honoring dry run.
-func (r *Registry) runComponent(ctx context.Context, id ids.ComponentID, inst components.Installer, opts Options) StepResult {
-	if opts.DryRun {
+// runComponent installs one component, honoring dry run. When the plan is
+// explicitly scoped to a subset of agents, that scope is forwarded so component
+// installers (skills) only touch the selected agents; otherwise the component
+// installs for all detected agents.
+func (r *Registry) runComponent(ctx context.Context, id ids.ComponentID, inst components.Installer, plan Plan) StepResult {
+	if plan.Options.DryRun {
 		return StepResult{ID: string(id), Action: ActionPlanned, Detail: "would install"}
 	}
-	if err := inst.Install(ctx, components.Options{}); err != nil {
+	copts := components.Options{}
+	if plan.Options.ScopedAgents {
+		copts.Agents = plan.Tools
+	}
+	if err := inst.Install(ctx, copts); err != nil {
 		return StepResult{ID: string(id), Action: ActionFailed, Detail: err.Error()}
 	}
 	return StepResult{ID: string(id), Action: ActionInstalled}

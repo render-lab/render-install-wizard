@@ -1,12 +1,14 @@
 // Package skills implements the components.Installer contract for agent skills.
 //
 // Skills are not written directly by this component. Instead the work is
-// delegated to the official skills installer (the Render CLI's `render skills
-// install`, or `npx skills add <repo>` as a fallback). The official installer
-// auto-detects the coding agents on the machine and writes both the per-tool
-// skills directories and the universal (~/.agents/skills) directory. This
-// component's job is to locate an appropriate installer, invoke it, and provide
-// best-effort detection/cleanup around the universal marker directory.
+// delegated to the official skills installer: the `skills` CLI via `npx skills
+// add <repo>` (the primary path), or the Render CLI's `render skills install` as
+// a fallback when npx is unavailable. Unscoped, the installer auto-detects the
+// coding agents on the machine and writes both the per-tool skills directories
+// and the universal (~/.agents/skills) directory; a --agent scope narrows it to
+// the named agents. This component's job is to locate an appropriate installer,
+// build the correctly scoped invocation, and provide best-effort
+// detection/cleanup around the universal marker directory.
 package skills
 
 import (
@@ -16,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/render-oss/render-install-wizard/internal/components"
 	"github.com/render-oss/render-install-wizard/internal/ids"
@@ -66,26 +69,98 @@ func (c *Component) Detect(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// Install installs agent skills by delegating to the official installer.
+// Install installs agent skills by delegating to the official installer,
+// honoring the agent scope in opts.
 //
 // On a dry run it performs no side effects. Otherwise it prefers the `skills`
-// CLI via npx (the documented primary path) with fully non-interactive flags —
-// `--all` installs every skill to all detected agents without prompts, and `-g`
-// installs to the user (global) skills directory. It falls back to the Render
-// CLI's `render skills install` (>= 2.10) when npx isn't available; the runner
-// leaves child stdin unset (/dev/null), so any prompt there gets EOF rather than
-// hanging. It returns an actionable error when neither installer is present.
+// CLI via npx (the documented primary path), pinned to render.SkillsCLISpec and
+// built fully non-interactive from the scope:
+//
+//   - Unscoped (opts.Agents empty): `-y skills@<ver> add <repo> --all -g`
+//     installs every skill to all detected agents (and the universal
+//     ~/.agents/skills dir) without prompts, delegating agent detection to the
+//     official installer.
+//   - Scoped (opts.Agents non-empty): `-y skills@<ver> add <repo> --skill *
+//     -a <agent>… -g -y` installs every skill to only the named agents, so an
+//     explicit --agent scope never touches unrelated agent environments.
+//
+// When npx is unavailable it falls back to the Render CLI, run by absolute path
+// as `render skills install --confirm --scope user -o text` — non-interactive
+// (no prompt can block on EOF) and installing all detected tools/skills. That
+// fallback cannot scope by agent, so a scoped request fails closed with an
+// actionable error rather than modifying unselected agents. It returns an
+// actionable error when neither installer is present.
 func (c *Component) Install(ctx context.Context, opts components.Options) error {
 	if opts.DryRun {
 		return nil
 	}
 	if _, err := c.lookPath("npx"); err == nil {
-		return c.run(ctx, "npx", "skills", "add", render.SkillsRepo, "--all", "-g")
+		return c.run(ctx, "npx", skillsAddArgs(opts.Agents)...)
 	}
-	if _, err := c.lookPath(render.CLIBinaryName); err == nil {
-		return c.run(ctx, render.CLIBinaryName, "skills", "install")
+	if cliPath, ok := c.renderCLIPath(); ok {
+		if len(opts.Agents) > 0 {
+			return fmt.Errorf("cannot scope skills to %s: the Render CLI fallback (render skills install) installs skills for all detected agents. Install Node/npx to scope skill installation by agent", agentNames(opts.Agents))
+		}
+		// The fallback only runs unscoped, so we want all detected tools and all
+		// skills. On a non-TTY the CLI emits text output, and --confirm makes it
+		// use defaults and skip every prompt (rather than blocking on EOF from a
+		// nil stdin). Run by absolute path so a stale PATH cannot resolve an
+		// unexpected or missing `render`.
+		return c.run(ctx, cliPath, "skills", "install", "--confirm", "--scope", "user", "-o", "text")
 	}
 	return errors.New("cannot install skills: install Node/npx or the Render CLI to add skills")
+}
+
+// renderCLIPath resolves the Render CLI to an absolute path, preferring the
+// wizard-owned install (~/.render/bin/render) over a PATH lookup so the skills
+// fallback executes the binary the wizard just installed rather than whatever a
+// possibly-stale PATH resolves.
+func (c *Component) renderCLIPath() (string, bool) {
+	if c.home != "" {
+		owned := filepath.Join(c.home, ".render", "bin", render.CLIBinaryName)
+		if fi, err := os.Stat(owned); err == nil && !fi.IsDir() {
+			return owned, true
+		}
+	}
+	if c.lookPath != nil {
+		if p, err := c.lookPath(render.CLIBinaryName); err == nil {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// skillsAddArgs builds the argument vector passed to `npx` for the skills
+// installer. The `-y` before the package lets npx install it without prompting,
+// and render.SkillsCLISpec pins the installer to an exact version so npx never
+// executes an unverified "latest" release.
+//
+// An empty agents slice yields the unscoped `--all -g` form; a non-empty slice
+// yields an explicit, non-interactive per-agent scope. Agent IDs match the
+// skills CLI's --agent values (claude-code, cursor, codex, opencode) exactly, so
+// no name translation is needed.
+func skillsAddArgs(agents []ids.ToolID) []string {
+	args := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo}
+	if len(agents) == 0 {
+		return append(args, "--all", "-g")
+	}
+	args = append(args, "--skill", "*")
+	for _, a := range agents {
+		args = append(args, "-a", string(a))
+	}
+	// -g installs to the user (global) skills dir; -y skips the skills CLI's own
+	// prompts (implied by --all in the unscoped path, but required once we drop
+	// --all here).
+	return append(args, "-g", "-y")
+}
+
+// agentNames renders a set of agent IDs as a comma-separated string for errors.
+func agentNames(agents []ids.ToolID) string {
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = string(a)
+	}
+	return strings.Join(names, ", ")
 }
 
 // Uninstall best-effort removes the universal skills directory.

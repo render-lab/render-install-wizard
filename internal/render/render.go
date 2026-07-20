@@ -6,7 +6,9 @@
 package render
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/render-oss/render-install-wizard/internal/ids"
 )
@@ -21,7 +23,14 @@ const (
 )
 
 // SkillsRepo is the GitHub repository the official skills installer pulls from.
+// It is a first-party Render repository (same trust domain as the Render CLI).
 const SkillsRepo = "render-oss/skills"
+
+// SkillsCLISpec pins the third-party `skills` npm package to an exact version so
+// `npx` executes a known, immutable installer rather than resolving whatever is
+// latest at run time (a supply-chain hazard, since npx would run unverified code
+// on every install). Bump this deliberately when adopting a newer skills CLI.
+const SkillsCLISpec = "skills@1.5.19"
 
 // Render CLI install facts.
 const (
@@ -30,9 +39,48 @@ const (
 	// CLIRepo is the Render CLI source repository.
 	CLIRepo = "render-oss/cli"
 	// CLIInstallScriptURL is the official Linux/macOS CLI install script,
-	// suitable for `curl -fsSL <url> | sh`.
+	// suitable for `curl -fsSL <url> | sh`. The wizard does not pipe it to a
+	// shell (it installs non-root binaries to ~/.local/bin, outside the
+	// wizard-owned tree); it is retained as a reference to the upstream source.
 	CLIInstallScriptURL = "https://raw.githubusercontent.com/render-oss/cli/refs/heads/main/bin/install.sh"
+	// CLILatestReleaseAPIURL returns metadata (including tag_name) for the most
+	// recent Render CLI release. It mirrors what the official install script
+	// queries to resolve "latest".
+	CLILatestReleaseAPIURL = "https://api.github.com/repos/render-oss/cli/releases/latest"
 )
+
+// cliReleaseTag normalizes a version to the "v"-prefixed release tag used in
+// GitHub release URLs (the archive filenames embed the version without the "v").
+func cliReleaseTag(version string) string {
+	if strings.HasPrefix(version, "v") {
+		return version
+	}
+	return "v" + version
+}
+
+// CLIArchiveName returns the release archive filename for the given version and
+// platform, matching the official installer's naming (cli_<version>_<os>_<arch>.zip).
+// goos/goarch use Go's conventions (linux/darwin, amd64/arm64), which already
+// match the published asset names.
+func CLIArchiveName(version, goos, goarch string) string {
+	num := strings.TrimPrefix(cliReleaseTag(version), "v")
+	return fmt.Sprintf("cli_%s_%s_%s.zip", num, goos, goarch)
+}
+
+// CLIArchiveURL returns the download URL of the Render CLI release archive for
+// the given version and platform.
+func CLIArchiveURL(version, goos, goarch string) string {
+	return fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", CLIRepo, cliReleaseTag(version), CLIArchiveName(version, goos, goarch))
+}
+
+// CLIChecksumsURL returns the download URL of the release's published SHA-256
+// checksums file (cli_<version>_SHA256SUMS), served alongside the archives so
+// the wizard can verify a downloaded archive before executing it.
+func CLIChecksumsURL(version string) string {
+	tag := cliReleaseTag(version)
+	num := strings.TrimPrefix(tag, "v")
+	return fmt.Sprintf("https://github.com/%s/releases/download/%s/cli_%s_SHA256SUMS", CLIRepo, tag, num)
+}
 
 // AuthMode selects how the MCP entry authenticates.
 type AuthMode string
@@ -75,8 +123,29 @@ func UniversalSkillsDir(home string) string {
 	return filepath.Join(home, ".agents", "skills")
 }
 
+// OpenCodeConfigFiles returns OpenCode's global config file candidates under
+// home, in precedence order (highest first). OpenCode loads both files and lets
+// opencode.jsonc override opencode.json for conflicting keys, so the wizard
+// edits the .jsonc form when it exists and otherwise the .json form. The .jsonc
+// form permits comments and trailing commas (JSONC), which the JSON editor in
+// internal/configedit preserves.
+func OpenCodeConfigFiles(home string) []string {
+	dir := filepath.Join(home, ".config", "opencode")
+	return []string{
+		filepath.Join(dir, "opencode.jsonc"),
+		filepath.Join(dir, "opencode.json"),
+	}
+}
+
+// OpenCodeSchemaURL is the value written to "$schema" when the wizard creates a
+// new OpenCode config file (for editor completion). An existing file's $schema
+// is never modified.
+const OpenCodeSchemaURL = "https://opencode.ai/config.json"
+
 // MCPConfigPath returns the MCP/config file path for the given tool under home,
-// and false for tools without a known config-file location.
+// and false for tools without a known config-file location. For OpenCode this is
+// the default (.json) location; use OpenCodeConfigFiles to honor an existing
+// .jsonc file's precedence when reading or writing.
 func MCPConfigPath(tool ids.ToolID, home string) (string, bool) {
 	switch tool {
 	case ids.ToolClaudeCode:

@@ -118,6 +118,49 @@ func TestConfigureMergeNotClobber(t *testing.T) {
 	}
 }
 
+// TestConfigureReplacesStaleRenderTable guards F08 for TOML: an existing render
+// table is replaced wholesale so a stale http_headers Authorization is not
+// carried into a new OAuth config, while sibling tables survive.
+func TestConfigureReplacesStaleRenderTable(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	existing := map[string]any{
+		"mcp_servers": map[string]any{
+			"other": map[string]any{"url": "https://example.com/mcp"},
+			render.MCPServerName: map[string]any{
+				"url":          "https://old.example.com/mcp",
+				"http_headers": map[string]any{"Authorization": "Bearer SECRET"},
+			},
+		},
+	}
+	data, err := toml.Marshal(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	server := renderServer(t, readConfig(t, home))
+	if _, present := server["http_headers"]; present {
+		t.Errorf("F08: stale http_headers carried forward: %#v", server)
+	}
+	if got := server["url"]; got != render.MCPServerURL {
+		t.Errorf("render url = %v, want %v", got, render.MCPServerURL)
+	}
+	if servers, _ := readConfig(t, home)["mcp_servers"].(map[string]any); servers["other"] == nil {
+		t.Error("sibling 'other' table was clobbered")
+	}
+}
+
 func TestConfigureWithoutMCP(t *testing.T) {
 	home := t.TempDir()
 	tool := &Tool{home: home, auth: render.AuthModeOAuth}

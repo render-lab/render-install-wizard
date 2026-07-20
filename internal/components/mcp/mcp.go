@@ -42,19 +42,30 @@ func (c *Component) ID() ids.ComponentID { return ids.ComponentMCP }
 // different config formats (JSON/TOML).
 func (c *Component) Detect(ctx context.Context) (bool, error) {
 	for _, tool := range ids.AllTools() {
-		path, ok := render.MCPConfigPath(tool, c.home)
-		if !ok {
-			continue
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		if strings.Contains(string(data), render.MCPServerURL) {
-			return true, nil
+		for _, path := range c.configPaths(tool) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			if strings.Contains(string(data), render.MCPServerURL) {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
+}
+
+// configPaths returns the candidate config file paths to inspect for a tool.
+// OpenCode may store config in opencode.json or opencode.jsonc, so both are
+// checked (matching the resolver the OpenCode writer uses).
+func (c *Component) configPaths(tool ids.ToolID) []string {
+	if tool == ids.ToolOpenCode {
+		return render.OpenCodeConfigFiles(c.home)
+	}
+	if path, ok := render.MCPConfigPath(tool, c.home); ok {
+		return []string{path}
+	}
+	return nil
 }
 
 // Install is a documented no-op: the Render MCP entry is written per-tool during

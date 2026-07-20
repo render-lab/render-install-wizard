@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/render-oss/render-install-wizard/internal/ids"
@@ -118,6 +119,62 @@ func TestConfigureMergeNotClobber(t *testing.T) {
 	}
 	if _, ok := servers[render.MCPServerName].(map[string]any); !ok {
 		t.Errorf("render entry not added: %#v", servers)
+	}
+}
+
+// TestConfigureReplacesStaleRenderFields guards F08: an existing render entry
+// (e.g. from a prior API-key config) is replaced wholesale, so stale headers and
+// transport fields are not carried forward, while sibling servers are kept.
+func TestConfigureReplacesStaleRenderFields(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{
+  "mcpServers": {
+    "other": {"type": "http", "url": "https://example.com/mcp"},
+    "render": {
+      "type": "stdio",
+      "command": "old-binary",
+      "args": ["--legacy"],
+      "url": "https://old.example.com/mcp",
+      "headers": {"Authorization": "Bearer SECRET"}
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	// Raw check: the old secret/transport fields must be gone entirely.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stale := range []string{"SECRET", "old-binary", "--legacy", "old.example.com"} {
+		if strings.Contains(string(raw), stale) {
+			t.Errorf("stale content %q carried forward:\n%s", stale, raw)
+		}
+	}
+
+	entry := renderEntry(t, readConfig(t, home))
+	if entry["type"] != "http" || entry["url"] != render.MCPServerURL {
+		t.Errorf("render entry not replaced cleanly: %#v", entry)
+	}
+	for _, k := range []string{"headers", "command", "args"} {
+		if _, present := entry[k]; present {
+			t.Errorf("stale field %q retained in render entry: %#v", k, entry)
+		}
+	}
+	cfg := readConfig(t, home)
+	if servers, _ := cfg["mcpServers"].(map[string]any); servers["other"] == nil {
+		t.Error("sibling 'other' server was clobbered")
 	}
 }
 

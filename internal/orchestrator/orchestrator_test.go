@@ -15,12 +15,18 @@ type fakeInstaller struct {
 	log          *[]string
 	installErr   error
 	uninstallErr error
+	// gotOpts, when non-nil, records the Options passed to the most recent
+	// Install call so tests can assert how the orchestrator scoped the run.
+	gotOpts *components.Options
 }
 
 func (f *fakeInstaller) ID() ids.ComponentID                  { return f.id }
 func (f *fakeInstaller) Detect(context.Context) (bool, error) { return false, nil }
-func (f *fakeInstaller) Install(_ context.Context, _ components.Options) error {
+func (f *fakeInstaller) Install(_ context.Context, opts components.Options) error {
 	*f.log = append(*f.log, "install:"+string(f.id))
+	if f.gotOpts != nil {
+		*f.gotOpts = opts
+	}
 	return f.installErr
 }
 func (f *fakeInstaller) Uninstall(context.Context) error {
@@ -164,6 +170,38 @@ func TestExecuteSkipsUnknownIDs(t *testing.T) {
 	}
 	if got := findAction(res.Tools, "not-a-tool"); got != ActionSkipped {
 		t.Errorf("unknown tool action = %s, want skipped", got)
+	}
+}
+
+// TestExecuteForwardsAgentScopeToComponents guards F02: an explicitly scoped
+// plan forwards the selected agents to component installers, while an unscoped
+// plan leaves the scope empty so components install for all detected agents.
+func TestExecuteForwardsAgentScopeToComponents(t *testing.T) {
+	var log []string
+	var skillsOpts components.Options
+	comps := map[ids.ComponentID]components.Installer{
+		ids.ComponentSkills: &fakeInstaller{id: ids.ComponentSkills, log: &log, gotOpts: &skillsOpts},
+	}
+	tls := map[ids.ToolID]tools.Target{ids.ToolCursor: &fakeTarget{id: ids.ToolCursor, log: &log}}
+	reg := NewRegistry(comps, tls)
+
+	reg.Execute(context.Background(), Plan{
+		Components: []ids.ComponentID{ids.ComponentSkills},
+		Tools:      []ids.ToolID{ids.ToolCursor},
+		Options:    Options{ScopedAgents: true},
+	})
+	if len(skillsOpts.Agents) != 1 || skillsOpts.Agents[0] != ids.ToolCursor {
+		t.Fatalf("scoped Agents = %v, want [cursor]", skillsOpts.Agents)
+	}
+
+	skillsOpts = components.Options{}
+	reg.Execute(context.Background(), Plan{
+		Components: []ids.ComponentID{ids.ComponentSkills},
+		Tools:      []ids.ToolID{ids.ToolCursor, ids.ToolCodex},
+		Options:    Options{ScopedAgents: false},
+	})
+	if len(skillsOpts.Agents) != 0 {
+		t.Fatalf("unscoped Agents = %v, want empty (installs for all detected)", skillsOpts.Agents)
 	}
 }
 

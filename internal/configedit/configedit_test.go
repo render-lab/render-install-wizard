@@ -421,7 +421,7 @@ func TestMergeJSONFile_PreservesFileMode(t *testing.T) {
 	}
 }
 
-func TestMergeJSONFile_NewFileMode0644(t *testing.T) {
+func TestMergeJSONFile_NewFileMode0600(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.json")
 	if err := MergeJSONFile(path, []byte(`{"a":1}`)); err != nil {
 		t.Fatalf("MergeJSONFile: %v", err)
@@ -430,7 +430,9 @@ func TestMergeJSONFile_NewFileMode0644(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Fatalf("new file mode wrong: got %o want 644", info.Mode().Perm())
+	// New wizard-owned config files must be private (F07): they can carry MCP
+	// Authorization headers or account/session state.
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("new file mode wrong: got %o want 600", info.Mode().Perm())
 	}
 }

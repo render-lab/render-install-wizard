@@ -4,6 +4,7 @@ package cliflags
 
 import (
 	"flag"
+	"fmt"
 	"strings"
 )
 
@@ -70,6 +71,16 @@ func Parse(args []string) (*Flags, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+
+	// Reject leftover positional operands. Go's flag parser stops at the first
+	// non-flag token, so a stray operand (e.g. a subcommand like "install")
+	// would silently swallow the flags after it — turning `install --dry-run`
+	// into a real install. This tool takes only flags, so any operand is an
+	// error rather than a dangerous no-op. flag.ErrHelp is handled above and
+	// never reaches here.
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("unexpected argument(s): %s; render-setup takes only flags (did you mean a flag like --dry-run?)", strings.Join(fs.Args(), " "))
 	}
 
 	for _, c := range strings.Split(components, ",") {

@@ -5,7 +5,6 @@ package claudecode
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,12 +78,8 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !ok {
 		return fmt.Errorf("claudecode: no MCP config path for home %q", t.home)
 	}
-	patch, err := t.mcpPatch()
-	if err != nil {
-		return err
-	}
-	if err := configedit.MergeJSONFile(path, patch); err != nil {
-		return fmt.Errorf("claudecode: merge MCP config: %w", err)
+	if err := configedit.SetJSONValue(path, t.mcpEntry(), "mcpServers", render.MCPServerName); err != nil {
+		return fmt.Errorf("claudecode: write MCP config: %w", err)
 	}
 	return nil
 }
@@ -103,10 +98,11 @@ func (t *Tool) Unconfigure(ctx context.Context) error {
 	return nil
 }
 
-// mcpPatch builds the JSON merge patch that adds Render's MCP server entry.
-// OAuth writes a credential-free URL-only entry; API-key mode adds an
-// Authorization header referencing an environment variable (never a secret).
-func (t *Tool) mcpPatch() ([]byte, error) {
+// mcpEntry builds the Render MCP server entry written to mcpServers.render.
+// It is written wholesale (replacing any prior render entry). OAuth writes a
+// credential-free URL-only entry; API-key mode adds an Authorization header
+// referencing an environment variable (never a secret).
+func (t *Tool) mcpEntry() map[string]any {
 	entry := map[string]any{
 		"type": "http",
 		"url":  render.MCPServerURL,
@@ -114,16 +110,7 @@ func (t *Tool) mcpPatch() ([]byte, error) {
 	if value, present := render.AuthorizationHeader(t.auth); present {
 		entry["headers"] = map[string]any{"Authorization": value}
 	}
-	patch := map[string]any{
-		"mcpServers": map[string]any{
-			render.MCPServerName: entry,
-		},
-	}
-	out, err := json.Marshal(patch)
-	if err != nil {
-		return nil, fmt.Errorf("claudecode: marshal MCP patch: %w", err)
-	}
-	return out, nil
+	return entry
 }
 
 // hasComponent reports whether the selection includes the given component.

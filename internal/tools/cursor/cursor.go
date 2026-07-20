@@ -7,7 +7,6 @@ package cursor
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,11 +78,7 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !ok {
 		return fmt.Errorf("cursor: no MCP config path for home %q", t.home)
 	}
-	patch, err := t.mcpPatch()
-	if err != nil {
-		return fmt.Errorf("cursor: build MCP patch: %w", err)
-	}
-	if err := configedit.MergeJSONFile(path, patch); err != nil {
+	if err := configedit.SetJSONValue(path, t.mcpEntry(), "mcpServers", render.MCPServerName); err != nil {
 		return fmt.Errorf("cursor: write MCP config: %w", err)
 	}
 	return nil
@@ -103,13 +98,16 @@ func (t *Tool) Unconfigure(ctx context.Context) error {
 	return nil
 }
 
-// mcpPatch builds the JSON merge patch for Cursor's ~/.cursor/mcp.json:
+// mcpEntry builds the Render MCP server entry written to mcpServers.render in
+// Cursor's ~/.cursor/mcp.json:
 //
-//	{"mcpServers":{"render":{"type":"http","url":<MCPServerURL>}}}
+//	{"type":"http","url":<MCPServerURL>}
 //
-// In API-key auth mode a "headers" object with an Authorization Bearer env-ref
-// (never a stored secret) is added under the render entry.
-func (t *Tool) mcpPatch() ([]byte, error) {
+// The entry is written wholesale (replacing any prior render entry), so
+// switching auth modes never leaves a stale Authorization header behind. In
+// API-key auth mode a "headers" object with an Authorization Bearer env-ref
+// (never a stored secret) is included.
+func (t *Tool) mcpEntry() map[string]any {
 	entry := map[string]any{
 		"type": "http",
 		"url":  render.MCPServerURL,
@@ -119,12 +117,7 @@ func (t *Tool) mcpPatch() ([]byte, error) {
 			"Authorization": value,
 		}
 	}
-	patch := map[string]any{
-		"mcpServers": map[string]any{
-			render.MCPServerName: entry,
-		},
-	}
-	return json.Marshal(patch)
+	return entry
 }
 
 var _ tools.Target = (*Tool)(nil)

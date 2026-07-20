@@ -36,10 +36,14 @@ RUN mkdir -p /root/.cursor /root/.codex
 ENV PATH="/root/.opencode/bin:/root/.local/bin:${PATH}"
 
 COPY --from=build /out/render-setup /usr/local/bin/render-setup
-COPY test/e2e/harness.sh test/e2e/detect_check.sh /e2e/
+COPY test/e2e/harness.sh test/e2e/detect_check.sh test/e2e/cli_install_check.sh test/e2e/opencode_jsonc_check.sh /e2e/
 RUN chmod +x /e2e/*.sh
 
-# Verify detection against the really-installed + seeded agents, then run the
+# Verify detection against the really-installed + seeded agents, confirm the CLI
+# installs into (and is discoverable from) the wizard-owned dir on this clean
+# non-Homebrew host, exercise the JSONC (opencode.jsonc) edit path, then run the
 # full hermetic install/idempotency/uninstall harness.
 CMD BIN=/usr/local/bin/render-setup /e2e/detect_check.sh claude-code cursor codex opencode \
+	&& BIN=/usr/local/bin/render-setup /e2e/cli_install_check.sh \
+	&& BIN=/usr/local/bin/render-setup /e2e/opencode_jsonc_check.sh \
 	&& BIN=/usr/local/bin/render-setup /e2e/harness.sh
