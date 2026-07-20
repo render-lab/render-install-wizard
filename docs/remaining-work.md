@@ -39,6 +39,11 @@ Nice-to-haves; none block launch.
 - **Sanity schema** — do the `/agents/*.md` pages need a structured `nextSteps` field for clean TUI
   rendering, vs. scraping full-page markdown? (Frontend-owned.)
 
+## 4. Windows support — not started
+
+Native Windows needs a parallel PowerShell path (`curl | sh` can't run on bare Windows). Scoped
+separately in [`windows-support.md`](windows-support.md). WSL already works via the Linux `sh` path.
+
 ## Done — closed residuals (for reference)
 
 - ✅ Non-interactive skills flags (`npx skills add render-oss/skills --all -g`).
@@ -47,37 +52,3 @@ Nice-to-haves; none block launch.
 - ✅ Download URL scheme reconciled (GitHub Releases, version-less names, `latest` redirect).
 - ✅ Bootstrap `/dev/tty`-openable fix for no-TTY environments.
 - ✅ Uninstall scoped to Render MCP config removal.
-
-## Windows support (a parallel PowerShell path)
-
-Today the curl path is macOS/Linux/WSL only; WSL already works via the `sh` path (it's Linux), and
-native Windows is covered by the in-flight WinGet manifest.
-
-Adding a *native* Windows one-liner is feasible but it's a **parallel path, not a tweak**:
-`curl | sh` can't run on bare Windows (no POSIX `sh`), so the Windows-native equivalent is a
-PowerShell one-liner — `irm render.com/agents.ps1 | iex`.
-
-Good news: the wizard binary already cross-compiles clean for `windows/amd64` and `windows/arm64`
-(no `/dev/tty` or unix syscalls in the Go code). What's blocking, by effort:
-
-- [ ] **PowerShell bootstrap** `scripts/agents.ps1` + a served route (`render.com/agents.ps1`): detect
-      arch → download `render-setup_windows_<arch>.exe` → verify SHA-256 → install to
-      `%USERPROFILE%\.render\bin` → update user PATH → exec. *(Medium — the main new artifact.)*
-- [ ] **Release matrix**: add `windows` (amd64 + arm64) to `.goreleaser.yaml` goos; `ArtifactName`
-      already appends `.exe`. *(Trivial.)*
-- [ ] **Windows PATH**: `internal/paths/shellpath.go` only handles zsh/bash/fish; Windows needs user
-      PATH via `setx`/registry or the PowerShell profile (or let the PS bootstrap own it). *(Small.)*
-- [ ] **Per-tool config paths + detection**: `render.MCPConfigPath` and `internal/detect` assume
-      `~/`-relative unix locations. Verify each tool's Windows location (Claude/Cursor/Codex are
-      likely home-relative → `%USERPROFILE%`; OpenCode may use `%APPDATA%`) and branch by `GOOS`.
-      *(Moderate — the real work/risk.)*
-- [ ] **CI/E2E**: add a `windows-latest` runner; the bash harness needs a pwsh port or Git Bash (the
-      realistic Docker env stays Linux-only). *(Moderate.)*
-
-**Open decision:** is a Windows PS one-liner worth it over WinGet? WinGet is the cleaner native
-install for humans; the PS path mainly helps agents/CI that want a scriptable one-liner. Worth
-deciding before investing in the per-tool Windows config/detection work (item 4).
-
-## Platform note
-
-- WSL is exercised via the Linux build (no hosted WSL CI runner).
