@@ -91,6 +91,37 @@ func TestSetJSONValueIdempotent(t *testing.T) {
 	}
 }
 
+// TestSetJSONValueNoOpPreservesInode guards F13: a second identical write does
+// not rewrite the file, so its identity (inode) and mtime are stable and agent
+// file-watchers aren't triggered on a no-op rerun.
+func TestSetJSONValueNoOpPreservesInode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"other":{"url":"x"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry := map[string]any{"type": "http", "url": "https://mcp.render.com/mcp"}
+	if err := SetJSONValue(path, entry, "mcpServers", "render"); err != nil {
+		t.Fatal(err)
+	}
+	fi1, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetJSONValue(path, entry, "mcpServers", "render"); err != nil {
+		t.Fatal(err)
+	}
+	fi2, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(fi1, fi2) {
+		t.Error("no-op rewrite changed the file identity (inode)")
+	}
+	if !fi1.ModTime().Equal(fi2.ModTime()) {
+		t.Errorf("no-op rewrite changed mtime: %v -> %v", fi1.ModTime(), fi2.ModTime())
+	}
+}
+
 // TestDeleteJSONPathPreservesComments guards F10 on uninstall: removing the
 // render entry from a JSONC file keeps comments and sibling entries.
 func TestDeleteJSONPathPreservesComments(t *testing.T) {

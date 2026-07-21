@@ -257,6 +257,14 @@ func deleteKeyPath(m map[string]any, keys []string) bool {
 // (for Claude) account/session state, so they must not be world- or
 // group-readable on a shared host.
 func atomicWrite(path string, data []byte) error {
+	// Operational idempotency (F13): if the file already contains exactly these
+	// bytes, do nothing — this avoids rewriting the file, so its mtime and inode
+	// are stable and file-watchers in running agents aren't triggered on a no-op
+	// rerun.
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, data) {
+		return nil
+	}
+
 	dir := filepath.Dir(path)
 	// MkdirAll only applies this mode to directories it creates; existing
 	// directories keep their current mode.

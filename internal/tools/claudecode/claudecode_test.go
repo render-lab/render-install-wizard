@@ -40,6 +40,30 @@ func renderEntry(t *testing.T, cfg map[string]any) map[string]any {
 	return entry
 }
 
+// TestConfigureHonorsClaudeConfigDir guards F11: with CLAUDE_CONFIG_DIR set, the
+// MCP entry is written to $CLAUDE_CONFIG_DIR/.claude.json, not ~/.claude.json.
+func TestConfigureHonorsClaudeConfigDir(t *testing.T) {
+	root := t.TempDir()
+	cfgDir := filepath.Join(root, "claude-cfg")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+
+	home := filepath.Join(root, "home")
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(cfgDir, ".claude.json")); err != nil {
+		t.Errorf("config not written to CLAUDE_CONFIG_DIR: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude.json")); !os.IsNotExist(err) {
+		t.Errorf("config written to default ~/.claude.json despite override (stat err=%v)", err)
+	}
+}
+
 func TestConfigureOAuth(t *testing.T) {
 	home := t.TempDir()
 	tool := &Tool{home: home, auth: render.AuthModeOAuth}

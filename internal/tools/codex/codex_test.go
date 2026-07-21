@@ -174,6 +174,30 @@ func TestConfigureWithoutMCP(t *testing.T) {
 	}
 }
 
+// TestConfigureHonorsCodexHome guards F11: with CODEX_HOME set, config is written
+// to $CODEX_HOME/config.toml, not the default ~/.codex/config.toml.
+func TestConfigureHonorsCodexHome(t *testing.T) {
+	root := t.TempDir()
+	custom := filepath.Join(root, "custom-codex")
+	if err := os.MkdirAll(custom, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_HOME", custom)
+
+	home := filepath.Join(root, "home")
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(custom, "config.toml")); err != nil {
+		t.Errorf("config not written to CODEX_HOME: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Errorf("config written to default location despite CODEX_HOME override (stat err=%v)", err)
+	}
+}
+
 func TestUnconfigure(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".codex", "config.toml")

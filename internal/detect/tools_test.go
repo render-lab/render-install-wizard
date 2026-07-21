@@ -137,3 +137,43 @@ func TestDetectorDetect(t *testing.T) {
 		})
 	}
 }
+
+// TestDetectorHonorsConfigHomeOverrides guards F11: agents whose config lives at
+// a relocated, environment-overridden location are still detected even when the
+// default directories are empty and no binary is on PATH.
+func TestDetectorHonorsConfigHomeOverrides(t *testing.T) {
+	home := t.TempDir()     // default locations intentionally empty
+	override := t.TempDir() // overridden locations live here
+
+	// Claude: $CLAUDE_CONFIG_DIR/.claude.json
+	if err := os.WriteFile(filepath.Join(override, ".claude.json"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Codex: $CODEX_HOME directory
+	codexHome := filepath.Join(override, "codex")
+	if err := os.MkdirAll(codexHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// OpenCode: $XDG_CONFIG_HOME/opencode directory
+	xdg := filepath.Join(override, "xdg")
+	if err := os.MkdirAll(filepath.Join(xdg, "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := map[string]string{
+		"CLAUDE_CONFIG_DIR": override,
+		"CODEX_HOME":        codexHome,
+		"XDG_CONFIG_HOME":   xdg,
+	}
+	d := detector{
+		home:     home,
+		goos:     "linux",
+		lookPath: fakeLookPath(), // nothing on PATH: force the marker path
+		getenv:   func(k string) string { return env[k] },
+	}
+	got := d.detect()
+	want := []ids.ToolID{ids.ToolClaudeCode, ids.ToolCodex, ids.ToolOpenCode}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("detect() with overrides = %v, want %v", got, want)
+	}
+}

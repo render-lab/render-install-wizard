@@ -18,10 +18,12 @@ type fakeInstaller struct {
 	// gotOpts, when non-nil, records the Options passed to the most recent
 	// Install call so tests can assert how the orchestrator scoped the run.
 	gotOpts *components.Options
+	// detected controls what Detect reports (default false = not installed).
+	detected bool
 }
 
 func (f *fakeInstaller) ID() ids.ComponentID                  { return f.id }
-func (f *fakeInstaller) Detect(context.Context) (bool, error) { return false, nil }
+func (f *fakeInstaller) Detect(context.Context) (bool, error) { return f.detected, nil }
 func (f *fakeInstaller) Install(_ context.Context, opts components.Options) error {
 	*f.log = append(*f.log, "install:"+string(f.id))
 	if f.gotOpts != nil {
@@ -99,8 +101,13 @@ func TestExecuteInstallOrderAndActions(t *testing.T) {
 		t.Errorf("unexpected failures: %+v", res)
 	}
 	for _, s := range res.Components {
-		if s.Action != ActionInstalled {
-			t.Errorf("component %s action = %s, want installed", s.ID, s.Action)
+		// The MCP component is reported as an aggregate of per-tool config.
+		want := ActionInstalled
+		if s.ID == string(ids.ComponentMCP) {
+			want = ActionConfigured
+		}
+		if s.Action != want {
+			t.Errorf("component %s action = %s, want %s", s.ID, s.Action, want)
 		}
 	}
 	for _, s := range res.Tools {
@@ -242,6 +249,93 @@ func TestExecuteContinuesPastFailures(t *testing.T) {
 	}
 	if got := findAction(res.Components, string(ids.ComponentCLI)); got != ActionFailed {
 		t.Errorf("cli action = %s, want failed", got)
+	}
+}
+
+// TestExecuteSkipsAlreadyInstalled guards F13: a component that Detect reports as
+// present is not reinstalled on an unpinned run; it is recorded as unchanged and
+// its installer is never invoked.
+func TestExecuteSkipsAlreadyInstalled(t *testing.T) {
+	var log []string
+	comps := map[ids.ComponentID]components.Installer{
+		ids.ComponentCLI: &fakeInstaller{id: ids.ComponentCLI, log: &log, detected: true},
+	}
+	reg := NewRegistry(comps, map[ids.ToolID]tools.Target{})
+	res := reg.Execute(context.Background(), Plan{Components: []ids.ComponentID{ids.ComponentCLI}})
+
+	if len(log) != 0 {
+		t.Fatalf("installer ran for an already-present component: %v", log)
+	}
+	if got := findAction(res.Components, string(ids.ComponentCLI)); got != ActionUnchanged {
+		t.Errorf("cli action = %s, want unchanged", got)
+	}
+}
+
+// TestExecutePinnedVersionReinstallsAndForwards guards F12/F13: a pinned version
+// forces (re)install even when already present, and the version is forwarded to
+// the component installer.
+func TestExecutePinnedVersionReinstallsAndForwards(t *testing.T) {
+	var log []string
+	var gotOpts components.Options
+	comps := map[ids.ComponentID]components.Installer{
+		ids.ComponentCLI: &fakeInstaller{id: ids.ComponentCLI, log: &log, detected: true, gotOpts: &gotOpts},
+	}
+	reg := NewRegistry(comps, map[ids.ToolID]tools.Target{})
+	res := reg.Execute(context.Background(), Plan{
+		Components: []ids.ComponentID{ids.ComponentCLI},
+		Options:    Options{Version: "v1.2.3"},
+	})
+
+	if len(log) != 1 {
+		t.Fatalf("pinned run should (re)install despite Detect=true, log=%v", log)
+	}
+	if gotOpts.Version != "v1.2.3" {
+		t.Errorf("forwarded Version = %q, want v1.2.3", gotOpts.Version)
+	}
+	if got := findAction(res.Components, string(ids.ComponentCLI)); got != ActionInstalled {
+		t.Errorf("cli action = %s, want installed", got)
+	}
+}
+
+// TestExecuteMCPZeroToolsFails guards F14: an explicit MCP request with no target
+// tools is a failure, not a silent success.
+func TestExecuteMCPZeroToolsFails(t *testing.T) {
+	var log []string
+	comps := map[ids.ComponentID]components.Installer{
+		ids.ComponentMCP: &fakeInstaller{id: ids.ComponentMCP, log: &log},
+	}
+	reg := NewRegistry(comps, map[ids.ToolID]tools.Target{})
+	res := reg.Execute(context.Background(), Plan{Components: []ids.ComponentID{ids.ComponentMCP}})
+
+	if !res.HasFailures() {
+		t.Fatal("expected failure for MCP request with zero target tools")
+	}
+	if got := findAction(res.Components, string(ids.ComponentMCP)); got != ActionFailed {
+		t.Errorf("mcp action = %s, want failed", got)
+	}
+}
+
+// TestExecuteMCPAllToolsFailIsFailure guards F14: if every target tool fails to
+// configure, the MCP aggregate is a failure.
+func TestExecuteMCPAllToolsFailIsFailure(t *testing.T) {
+	var log []string
+	comps := map[ids.ComponentID]components.Installer{
+		ids.ComponentMCP: &fakeInstaller{id: ids.ComponentMCP, log: &log},
+	}
+	tls := map[ids.ToolID]tools.Target{
+		ids.ToolCursor: &fakeTarget{id: ids.ToolCursor, log: &log, confErr: errors.New("boom")},
+	}
+	reg := NewRegistry(comps, tls)
+	res := reg.Execute(context.Background(), Plan{
+		Components: []ids.ComponentID{ids.ComponentMCP},
+		Tools:      []ids.ToolID{ids.ToolCursor},
+	})
+
+	if !res.HasFailures() {
+		t.Fatal("expected failure when all target tools fail")
+	}
+	if got := findAction(res.Components, string(ids.ComponentMCP)); got != ActionFailed {
+		t.Errorf("mcp action = %s, want failed", got)
 	}
 }
 

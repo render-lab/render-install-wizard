@@ -40,6 +40,10 @@ type Options struct {
 	// selected agents. When false the run is unscoped (all detected agents) and
 	// components fall back to their "all detected" behavior.
 	ScopedAgents bool
+	// Version pins the Render CLI to a specific release (from --pin-version).
+	// Empty means latest. It is forwarded to component installers via
+	// components.Options.Version; only the CLI installer acts on it.
+	Version string
 }
 
 // Plan describes what to do: which components to act on, which tools to target,
@@ -66,6 +70,9 @@ const (
 	ActionPlanned Action = "planned"
 	// ActionSkipped means the step was skipped (unsupported ID or nothing to do).
 	ActionSkipped Action = "skipped"
+	// ActionUnchanged means the desired state was already satisfied, so the step
+	// made no change (e.g. the component was already installed on a rerun).
+	ActionUnchanged Action = "unchanged"
 	// ActionFailed means the step returned an error.
 	ActionFailed Action = "failed"
 )
@@ -151,6 +158,7 @@ func (r *Registry) Execute(ctx context.Context, plan Plan) Result {
 	}
 	res.Components = r.executeComponents(ctx, plan)
 	res.Tools = r.executeTools(ctx, plan)
+	reconcileMCPResult(&res, plan)
 	return res
 }
 
@@ -188,15 +196,26 @@ func (r *Registry) executeComponents(ctx context.Context, plan Plan) []StepResul
 	return out
 }
 
-// runComponent installs one component, honoring dry run. When the plan is
-// explicitly scoped to a subset of agents, that scope is forwarded so component
-// installers (skills) only touch the selected agents; otherwise the component
-// installs for all detected agents.
+// runComponent installs one component, honoring dry run, the pinned version, and
+// the agent scope.
+//
+// For operational idempotency it first checks whether the component is already
+// present (Detect); when it is and no explicit version was requested, it skips
+// the installer entirely and records the step as unchanged, so a no-op rerun
+// performs no network or package-manager work. A pinned version always
+// (re)installs to guarantee that exact version. When the plan is scoped to a
+// subset of agents, that scope is forwarded so component installers (skills)
+// only touch the selected agents.
 func (r *Registry) runComponent(ctx context.Context, id ids.ComponentID, inst components.Installer, plan Plan) StepResult {
 	if plan.Options.DryRun {
 		return StepResult{ID: string(id), Action: ActionPlanned, Detail: "would install"}
 	}
-	copts := components.Options{}
+	if plan.Options.Version == "" {
+		if present, err := inst.Detect(ctx); err == nil && present {
+			return StepResult{ID: string(id), Action: ActionUnchanged, Detail: "already installed"}
+		}
+	}
+	copts := components.Options{Version: plan.Options.Version}
 	if plan.Options.ScopedAgents {
 		copts.Agents = plan.Tools
 	}

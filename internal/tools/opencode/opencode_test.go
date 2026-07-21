@@ -218,6 +218,35 @@ func TestConfigureEditsJsoncActiveFile(t *testing.T) {
 	}
 }
 
+// TestConfigureHonorsOpenCodeConfig guards F11: with OPENCODE_CONFIG naming an
+// explicit file, the wizard edits that file (the active, highest-precedence one)
+// and does not create the default ~/.config/opencode/opencode.json.
+func TestConfigureHonorsOpenCodeConfig(t *testing.T) {
+	root := t.TempDir()
+	explicit := filepath.Join(root, "custom", "oc.jsonc")
+	if err := os.MkdirAll(filepath.Dir(explicit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENCODE_CONFIG", explicit)
+
+	home := filepath.Join(root, "home")
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	data, err := os.ReadFile(explicit)
+	if err != nil {
+		t.Fatalf("explicit OPENCODE_CONFIG file not written: %v", err)
+	}
+	if !strings.Contains(string(data), render.MCPServerURL) {
+		t.Error("render MCP entry not written to the OPENCODE_CONFIG file")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Errorf("default opencode.json created despite OPENCODE_CONFIG override (stat err=%v)", err)
+	}
+}
+
 func TestConfigureWithoutMCPDoesNothing(t *testing.T) {
 	home := t.TempDir()
 	tool := &Tool{home: home, auth: render.AuthModeOAuth}

@@ -27,7 +27,7 @@ type Flags struct {
 	ShowVersion bool
 	// DryRun prints the plan without making changes.
 	DryRun bool
-	// PinVersion pins the wizard/CLI to a specific version.
+	// PinVersion pins the Render CLI to a specific version (empty means latest).
 	PinVersion string
 }
 
@@ -67,7 +67,7 @@ func Parse(args []string) (*Flags, error) {
 	fs.BoolVar(&f.JSON, "json", false, "emit machine-readable JSON logs")
 	fs.BoolVar(&f.ShowVersion, "version", false, "print the version and exit")
 	fs.BoolVar(&f.DryRun, "dry-run", false, "print the plan without making changes")
-	fs.StringVar(&f.PinVersion, "pin-version", "", "pin to a specific version")
+	fs.StringVar(&f.PinVersion, "pin-version", "", "pin the Render CLI to a specific version (e.g. v1.2.3); default is latest")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

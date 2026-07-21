@@ -3,6 +3,8 @@ package render
 import (
 	"strings"
 	"testing"
+
+	"github.com/render-oss/render-install-wizard/internal/ids"
 )
 
 // TestCLIArchiveURL locks the release-asset naming: the URL path uses a
@@ -43,5 +45,67 @@ func TestCLIChecksumsURL(t *testing.T) {
 func TestSkillsCLISpecIsPinned(t *testing.T) {
 	if SkillsCLISpec == "skills" || !strings.Contains(SkillsCLISpec, "@") {
 		t.Errorf("SkillsCLISpec = %q, want a version-pinned spec like skills@x.y.z", SkillsCLISpec)
+	}
+}
+
+func envMap(m map[string]string) func(string) string {
+	return func(k string) string { return m[k] }
+}
+
+// TestMCPConfigPathHonorsOverrides guards F11: each tool's documented config-home
+// environment override is honored, defaults are used otherwise, and unaffected
+// tools ignore unrelated variables.
+func TestMCPConfigPathHonorsOverrides(t *testing.T) {
+	const home = "/home/u"
+	cases := []struct {
+		name string
+		tool ids.ToolID
+		env  map[string]string
+		want string
+	}{
+		{"claude default", ids.ToolClaudeCode, nil, "/home/u/.claude.json"},
+		{"claude override", ids.ToolClaudeCode, map[string]string{"CLAUDE_CONFIG_DIR": "/cfg/claude"}, "/cfg/claude/.claude.json"},
+		{"codex default", ids.ToolCodex, nil, "/home/u/.codex/config.toml"},
+		{"codex override", ids.ToolCodex, map[string]string{"CODEX_HOME": "/cfg/codex"}, "/cfg/codex/config.toml"},
+		{"cursor ignores xdg", ids.ToolCursor, map[string]string{"XDG_CONFIG_HOME": "/x"}, "/home/u/.cursor/mcp.json"},
+		{"opencode default", ids.ToolOpenCode, nil, "/home/u/.config/opencode/opencode.json"},
+		{"opencode xdg", ids.ToolOpenCode, map[string]string{"XDG_CONFIG_HOME": "/x"}, "/x/opencode/opencode.json"},
+		{"opencode explicit file", ids.ToolOpenCode, map[string]string{"OPENCODE_CONFIG": "/custom/oc.jsonc"}, "/custom/oc.jsonc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := mcpConfigPath(tc.tool, home, envMap(tc.env))
+			if !ok || got != tc.want {
+				t.Errorf("mcpConfigPath(%s) = %q (ok=%v), want %q", tc.tool, got, ok, tc.want)
+			}
+		})
+	}
+}
+
+// TestOpenCodeConfigFilesHonorsOverrides guards F11's OpenCode resolution and
+// precedence: OPENCODE_CONFIG (explicit file) wins over the XDG/global directory.
+func TestOpenCodeConfigFilesHonorsOverrides(t *testing.T) {
+	const home = "/home/u"
+	eq := func(got, want []string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	if got := openCodeConfigFiles(home, envMap(nil)); !eq(got, []string{"/home/u/.config/opencode/opencode.jsonc", "/home/u/.config/opencode/opencode.json"}) {
+		t.Errorf("default = %v", got)
+	}
+	if got := openCodeConfigFiles(home, envMap(map[string]string{"XDG_CONFIG_HOME": "/x"})); !eq(got, []string{"/x/opencode/opencode.jsonc", "/x/opencode/opencode.json"}) {
+		t.Errorf("xdg = %v", got)
+	}
+	// OPENCODE_CONFIG names the exact active file and takes precedence over XDG.
+	if got := openCodeConfigFiles(home, envMap(map[string]string{"OPENCODE_CONFIG": "/c/oc.jsonc", "XDG_CONFIG_HOME": "/x"})); !eq(got, []string{"/c/oc.jsonc"}) {
+		t.Errorf("explicit = %v", got)
 	}
 }

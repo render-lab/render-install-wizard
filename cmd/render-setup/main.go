@@ -87,10 +87,12 @@ func run(args []string) int {
 			// An explicit --agent restricts the run to those agents; forward that
 			// scope so component installers (skills) don't touch other agents.
 			ScopedAgents: len(flags.Agents) > 0,
+			// --pin-version pins the Render CLI release.
+			Version: flags.PinVersion,
 		},
 	}
 	result := reg.Execute(ctx, plan)
-	nextSteps := orchestrator.NextSteps(plan)
+	nextSteps := orchestrator.NextSteps(plan, result)
 
 	if flags.JSON {
 		emitJSON(result, nextSteps, warnings)

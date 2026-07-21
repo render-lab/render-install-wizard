@@ -7,6 +7,7 @@ package render
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -123,18 +124,37 @@ func UniversalSkillsDir(home string) string {
 	return filepath.Join(home, ".agents", "skills")
 }
 
-// OpenCodeConfigFiles returns OpenCode's global config file candidates under
-// home, in precedence order (highest first). OpenCode loads both files and lets
-// opencode.jsonc override opencode.json for conflicting keys, so the wizard
-// edits the .jsonc form when it exists and otherwise the .json form. The .jsonc
-// form permits comments and trailing commas (JSONC), which the JSON editor in
+// OpenCodeConfigFiles returns OpenCode's config file candidates under home, in
+// precedence order (highest first). OpenCode loads both files and lets
+// opencode.jsonc override opencode.json for conflicting keys, so the wizard edits
+// the .jsonc form when it exists and otherwise the .json form. The .jsonc form
+// permits comments and trailing commas (JSONC), which the JSON editor in
 // internal/configedit preserves.
+//
+// It honors OpenCode's documented overrides: OPENCODE_CONFIG names an explicit
+// config file (higher precedence than the global directory, so editing it makes
+// the change active), and XDG_CONFIG_HOME relocates the global directory.
 func OpenCodeConfigFiles(home string) []string {
-	dir := filepath.Join(home, ".config", "opencode")
-	return []string{
-		filepath.Join(dir, "opencode.jsonc"),
-		filepath.Join(dir, "opencode.json"),
+	return openCodeConfigFiles(home, os.Getenv)
+}
+
+func openCodeConfigFiles(home string, getenv func(string) string) []string {
+	if f := getenv("OPENCODE_CONFIG"); f != "" {
+		return []string{f}
 	}
+	base := filepath.Join(xdgConfigHome(home, getenv), "opencode")
+	return []string{
+		filepath.Join(base, "opencode.jsonc"),
+		filepath.Join(base, "opencode.json"),
+	}
+}
+
+// xdgConfigHome returns $XDG_CONFIG_HOME or the ~/.config default under home.
+func xdgConfigHome(home string, getenv func(string) string) string {
+	if dir := getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, ".config")
 }
 
 // OpenCodeSchemaURL is the value written to "$schema" when the wizard creates a
@@ -143,22 +163,48 @@ func OpenCodeConfigFiles(home string) []string {
 const OpenCodeSchemaURL = "https://opencode.ai/config.json"
 
 // MCPConfigPath returns the MCP/config file path for the given tool under home,
-// and false for tools without a known config-file location. For OpenCode this is
-// the default (.json) location; use OpenCodeConfigFiles to honor an existing
-// .jsonc file's precedence when reading or writing.
+// honoring each tool's documented configuration-home environment overrides
+// (CLAUDE_CONFIG_DIR, CODEX_HOME, OPENCODE_CONFIG, XDG_CONFIG_HOME). It returns
+// false for tools without a known config-file location. For OpenCode this is the
+// default file; use OpenCodeConfigFiles to honor an existing .jsonc file's
+// precedence when reading or writing.
 func MCPConfigPath(tool ids.ToolID, home string) (string, bool) {
+	return mcpConfigPath(tool, home, os.Getenv)
+}
+
+func mcpConfigPath(tool ids.ToolID, home string, getenv func(string) string) (string, bool) {
 	switch tool {
 	case ids.ToolClaudeCode:
-		return filepath.Join(home, ".claude.json"), true
+		// CLAUDE_CONFIG_DIR relocates ~/.claude.json to $CLAUDE_CONFIG_DIR/.claude.json.
+		return filepath.Join(claudeConfigDir(home, getenv), ".claude.json"), true
 	case ids.ToolCursor:
 		return filepath.Join(home, ".cursor", "mcp.json"), true
 	case ids.ToolCodex:
-		return filepath.Join(home, ".codex", "config.toml"), true
+		// CODEX_HOME relocates the whole ~/.codex tree.
+		return filepath.Join(codexHome(home, getenv), "config.toml"), true
 	case ids.ToolOpenCode:
-		return filepath.Join(home, ".config", "opencode", "opencode.json"), true
+		files := openCodeConfigFiles(home, getenv)
+		return files[len(files)-1], true
 	default:
 		return "", false
 	}
+}
+
+// claudeConfigDir returns the directory holding Claude Code's .claude.json:
+// $CLAUDE_CONFIG_DIR when set, otherwise home (the default ~/.claude.json).
+func claudeConfigDir(home string, getenv func(string) string) string {
+	if dir := getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	return home
+}
+
+// codexHome returns Codex's config root: $CODEX_HOME when set, otherwise ~/.codex.
+func codexHome(home string, getenv func(string) string) string {
+	if dir := getenv("CODEX_HOME"); dir != "" {
+		return dir
+	}
+	return filepath.Join(home, ".codex")
 }
 
 // PluginKind describes how a tool's Render plugin is installed.
