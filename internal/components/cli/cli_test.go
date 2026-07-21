@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
 )
 
 // recordedCall captures a single invocation of the fake runner.
@@ -177,6 +177,49 @@ func TestInstall(t *testing.T) {
 		want := []string{"install", render.CLIBinaryName}
 		if len(call.args) != len(want) || call.args[0] != want[0] || call.args[1] != want[1] {
 			t.Fatalf("expected args %v, got %v", want, call.args)
+		}
+	})
+
+	t.Run("brew failure falls back to direct download", func(t *testing.T) {
+		home := t.TempDir()
+		var urls []string
+		content := []byte("#!/bin/sh\n")
+		c := &Component{
+			home:       home,
+			goos:       "linux",
+			goarch:     "amd64",
+			lookPath:   lookPathFound("brew"),
+			run:        func(context.Context, string, ...string) error { return errors.New("brew: formula unavailable") },
+			fetch:      fakeCLIFetch(t, "v1.0.0", "linux", "amd64", content, &urls),
+			ensurePath: func(string) error { return nil },
+		}
+		if err := c.Install(ctx, components.Options{}); err != nil {
+			t.Fatalf("Install should fall back to download when brew fails: %v", err)
+		}
+		dest := filepath.Join(home, ".render", "bin", render.CLIBinaryName)
+		if got, err := os.ReadFile(dest); err != nil || !bytes.Equal(got, content) {
+			t.Fatalf("fallback did not install the CLI (err=%v)", err)
+		}
+	})
+
+	t.Run("brew and download both fail returns aggregate error", func(t *testing.T) {
+		c := &Component{
+			home:       t.TempDir(),
+			goos:       "linux",
+			goarch:     "amd64",
+			lookPath:   lookPathFound("brew"),
+			run:        func(context.Context, string, ...string) error { return errors.New("brew boom") },
+			fetch:      func(context.Context, string) ([]byte, error) { return nil, errors.New("network down") },
+			ensurePath: func(string) error { return nil },
+		}
+		err := c.Install(ctx, components.Options{Version: "1.0.0"})
+		if err == nil {
+			t.Fatal("expected an aggregate error when both brew and download fail")
+		}
+		for _, want := range []string{"brew", "download"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("aggregate error should mention %q, got %q", want, err.Error())
+			}
 		}
 	})
 

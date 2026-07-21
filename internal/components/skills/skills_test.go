@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
 )
 
 // recorder captures the command a Component would have run without shelling out.
@@ -184,6 +184,59 @@ func TestInstallScopedFailsClosedWithoutNpx(t *testing.T) {
 	}
 	if rec.called {
 		t.Fatal("runner must not be called when failing closed")
+	}
+}
+
+// condRecorder records the command names it runs and fails for a chosen name,
+// so fallback ordering can be asserted.
+type condRecorder struct {
+	calls   []string
+	failFor string
+}
+
+func (m *condRecorder) run(_ context.Context, name string, _ ...string) error {
+	m.calls = append(m.calls, name)
+	if name == m.failFor {
+		return errors.New(name + " failed")
+	}
+	return nil
+}
+
+// TestInstallNpxFailureFallsBackToRenderCLI guards F36: when npx is present but
+// fails on an unscoped run, the Render CLI fallback is used.
+func TestInstallNpxFailureFallsBackToRenderCLI(t *testing.T) {
+	rec := &condRecorder{failFor: "npx"}
+	c := &Component{
+		home:     t.TempDir(),
+		lookPath: lookPathFunc("npx", render.CLIBinaryName),
+		run:      rec.run,
+	}
+	if err := c.Install(context.Background(), components.Options{}); err != nil {
+		t.Fatalf("expected fallback to Render CLI to succeed, got %v", err)
+	}
+	if len(rec.calls) != 2 || rec.calls[0] != "npx" {
+		t.Fatalf("expected npx then render CLI, got %v", rec.calls)
+	}
+	if rec.calls[1] != "/usr/bin/"+render.CLIBinaryName {
+		t.Errorf("fallback should invoke the resolved render CLI, got %q", rec.calls[1])
+	}
+}
+
+// TestInstallNpxFailureScopedDoesNotFallBack guards F36 + F02: a scoped run must
+// NOT fall back to the non-scopable Render CLI; it surfaces the npx error.
+func TestInstallNpxFailureScopedDoesNotFallBack(t *testing.T) {
+	rec := &condRecorder{failFor: "npx"}
+	c := &Component{
+		home:     t.TempDir(),
+		lookPath: lookPathFunc("npx", render.CLIBinaryName),
+		run:      rec.run,
+	}
+	err := c.Install(context.Background(), components.Options{Agents: []ids.ToolID{ids.ToolCursor}})
+	if err == nil {
+		t.Fatal("expected the npx error to surface for a scoped run")
+	}
+	if len(rec.calls) != 1 || rec.calls[0] != "npx" {
+		t.Errorf("scoped run must not fall back to the Render CLI, calls=%v", rec.calls)
 	}
 }
 

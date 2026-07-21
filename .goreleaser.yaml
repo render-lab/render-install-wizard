@@ -41,7 +41,7 @@ checksum:
 
 release:
   github:
-    owner: render-oss
+    owner: render-lab
     name: render-install-wizard
   # Cut releases as drafts so a human can review assets before publishing.
   draft: true

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/tools"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/tools"
 )
 
 type fakeInstaller struct {

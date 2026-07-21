@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // Model is the bubbletea model backing the single-axis component picker. It

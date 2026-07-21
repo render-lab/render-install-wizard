@@ -1,6 +1,6 @@
 package wizard
 
-import "github.com/render-oss/render-install-wizard/internal/ids"
+import "github.com/render-lab/render-install-wizard/internal/ids"
 
 // Selection captures the components the user has chosen to install.
 type Selection struct {

@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // step feeds a key message through Update and returns the model cast back to

@@ -1,4 +1,4 @@
-module github.com/render-oss/render-install-wizard
+module github.com/render-lab/render-install-wizard
 
 go 1.26.4
 

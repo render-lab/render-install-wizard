@@ -12,11 +12,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/render-oss/render-install-wizard/internal/cliflags"
-	"github.com/render-oss/render-install-wizard/internal/detect"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/orchestrator"
-	"github.com/render-oss/render-install-wizard/internal/wizard"
+	"github.com/render-lab/render-install-wizard/internal/cliflags"
+	"github.com/render-lab/render-install-wizard/internal/detect"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/orchestrator"
+	"github.com/render-lab/render-install-wizard/internal/wizard"
 )
 
 // version is the wizard version, overridden at build time via -ldflags.

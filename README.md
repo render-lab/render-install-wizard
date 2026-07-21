@@ -50,7 +50,7 @@ servers intact) and does **not** remove the CLI or skills.
 
 The bootstrap installs the same wizard everyone else gets; you can also run `render-setup` directly
 if you installed it another way. Binaries are published to
-[GitHub Releases](https://github.com/render-oss/render-install-wizard/releases) with SHA-256
+[GitHub Releases](https://github.com/render-lab/render-install-wizard/releases) with SHA-256
 checksums; `RENDER_SETUP_VERSION=vX.Y.Z` pins a version (default: latest).
 
 ## Documentation

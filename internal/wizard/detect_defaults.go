@@ -1,6 +1,6 @@
 package wizard
 
-import "github.com/render-oss/render-install-wizard/internal/ids"
+import "github.com/render-lab/render-install-wizard/internal/ids"
 
 // PrecheckDefaults computes the default selection given the detected tools,
 // following the "detect-then-default" policy: every user-selectable component is

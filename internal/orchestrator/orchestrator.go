@@ -13,16 +13,16 @@ package orchestrator
 import (
 	"context"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/components/cli"
-	"github.com/render-oss/render-install-wizard/internal/components/mcp"
-	"github.com/render-oss/render-install-wizard/internal/components/skills"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/tools"
-	"github.com/render-oss/render-install-wizard/internal/tools/claudecode"
-	"github.com/render-oss/render-install-wizard/internal/tools/codex"
-	"github.com/render-oss/render-install-wizard/internal/tools/cursor"
-	"github.com/render-oss/render-install-wizard/internal/tools/opencode"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/components/cli"
+	"github.com/render-lab/render-install-wizard/internal/components/mcp"
+	"github.com/render-lab/render-install-wizard/internal/components/skills"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/tools"
+	"github.com/render-lab/render-install-wizard/internal/tools/claudecode"
+	"github.com/render-lab/render-install-wizard/internal/tools/codex"
+	"github.com/render-lab/render-install-wizard/internal/tools/cursor"
+	"github.com/render-lab/render-install-wizard/internal/tools/opencode"
 )
 
 // Options controls how a plan is executed.

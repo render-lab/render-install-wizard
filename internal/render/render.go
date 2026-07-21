@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // MCP server identity. The wizard writes an MCP entry named MCPServerName that

@@ -19,11 +19,21 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/paths"
-	"github.com/render-oss/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/execx"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/paths"
+	"github.com/render-lab/render-install-wizard/internal/render"
+)
+
+// Per-step network/package-manager timeouts (F17). Each attempt gets its own
+// bounded deadline so a stalled step fails with a clear error instead of hanging
+// indefinitely, and a hung preferred installer doesn't starve the fallback.
+const (
+	brewTimeout     = 5 * time.Minute
+	downloadTimeout = 5 * time.Minute
 )
 
 // Component installs and manages the Render CLI.
@@ -64,21 +74,12 @@ func New() *Component {
 		home = ""
 	}
 	return &Component{
-		home:     home,
-		goos:     runtime.GOOS,
-		goarch:   runtime.GOARCH,
-		lookPath: exec.LookPath,
-		run: func(ctx context.Context, name string, args ...string) error {
-			return exec.CommandContext(ctx, name, args...).Run()
-		},
-		runOutput: func(ctx context.Context, name string, args ...string) (string, error) {
-			var buf bytes.Buffer
-			cmd := exec.CommandContext(ctx, name, args...)
-			cmd.Stdout = &buf
-			cmd.Stderr = &buf
-			err := cmd.Run()
-			return buf.String(), err
-		},
+		home:       home,
+		goos:       runtime.GOOS,
+		goarch:     runtime.GOARCH,
+		lookPath:   exec.LookPath,
+		run:        execx.Run,
+		runOutput:  execx.CombinedOutput,
 		fetch:      httpFetch,
 		ensurePath: ensurePathIn(home),
 	}
@@ -144,14 +145,25 @@ func (c *Component) Status(ctx context.Context) (components.Status, error) {
 // directory the wizard detects and manages — and only prints PATH guidance that
 // a piped run would discard, so `render` can be reported installed yet remain
 // unavailable to the wizard's later steps and the user's shell.
+//
+// If Homebrew is present but the install fails (a stale brew, registry outage,
+// or partial local state), the direct release download is tried as a fallback
+// rather than failing outright (F36); an aggregate error is returned only when
+// both paths fail.
 func (c *Component) Install(ctx context.Context, opts components.Options) error {
 	if opts.DryRun {
 		return nil
 	}
 	if c.lookPath != nil {
 		if _, err := c.lookPath("brew"); err == nil {
-			if err := c.run(ctx, "brew", "install", render.CLIBinaryName); err != nil {
-				return fmt.Errorf("install render CLI via brew: %w", err)
+			bctx, cancel := context.WithTimeout(ctx, brewTimeout)
+			brewErr := c.run(bctx, "brew", "install", render.CLIBinaryName)
+			cancel()
+			if brewErr == nil {
+				return nil
+			}
+			if relErr := c.installFromRelease(ctx, opts); relErr != nil {
+				return fmt.Errorf("install render CLI: brew failed (%v); direct download also failed: %w", brewErr, relErr)
 			}
 			return nil
 		}
@@ -160,8 +172,12 @@ func (c *Component) Install(ctx context.Context, opts components.Options) error 
 }
 
 // installFromRelease downloads the Render CLI release archive into
-// <home>/.render/bin/render and makes that directory discoverable on PATH.
+// <home>/.render/bin/render and makes that directory discoverable on PATH. The
+// whole download+verify sequence is bounded by a single deadline (F17).
 func (c *Component) installFromRelease(ctx context.Context, opts components.Options) error {
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	defer cancel()
+
 	version := opts.Version
 	if version == "" {
 		v, err := c.latestVersion(ctx)

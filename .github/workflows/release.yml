@@ -22,6 +22,21 @@ jobs:
           go-version: "1.26"
           cache: true
 
+      # F33: fail fast if the release runs from a repo other than the GoReleaser
+      # target / Go module coordinate. The repository-scoped GITHUB_TOKEN cannot
+      # publish assets cross-repo, so a mismatch would otherwise fail deep inside
+      # GoReleaser (or publish nothing) and leave every bootstrap URL 404.
+      # Keep EXPECTED in sync with .goreleaser.yaml (release.github) and go.mod.
+      - name: Release preflight — verify repository coordinate
+        run: |
+          EXPECTED="render-lab/render-install-wizard"
+          if [ "${GITHUB_REPOSITORY}" != "$EXPECTED" ]; then
+            echo "::error::Release must run from ${EXPECTED} (the GoReleaser release target and Go module path), but this workflow is running in '${GITHUB_REPOSITORY}'."
+            echo "Create or transfer the repository to ${EXPECTED} and run the release there, or realign .goreleaser.yaml + the go.mod module path to the canonical coordinate. A repo-scoped GITHUB_TOKEN cannot publish cross-repo."
+            exit 1
+          fi
+          echo "Release coordinate OK: ${GITHUB_REPOSITORY}"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

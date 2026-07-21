@@ -19,11 +19,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/render-oss/render-install-wizard/internal/components"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/components"
+	"github.com/render-lab/render-install-wizard/internal/execx"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
 )
+
+// installTimeout bounds each skills-install attempt (F17) so a stalled npx or
+// Render CLI subprocess fails with a clear error rather than hanging.
+const installTimeout = 5 * time.Minute
 
 // Component installs and manages Render agent skills by delegating to the
 // official skills installer.
@@ -44,9 +50,7 @@ func New() *Component {
 	return &Component{
 		home:     home,
 		lookPath: exec.LookPath,
-		run: func(ctx context.Context, name string, args ...string) error {
-			return exec.CommandContext(ctx, name, args...).Run()
-		},
+		run:      execx.Run,
 	}
 }
 
@@ -94,21 +98,48 @@ func (c *Component) Install(ctx context.Context, opts components.Options) error 
 	if opts.DryRun {
 		return nil
 	}
-	if _, err := c.lookPath("npx"); err == nil {
-		return c.run(ctx, "npx", skillsAddArgs(opts.Agents)...)
+	_, npxLookErr := c.lookPath("npx")
+	cliPath, cliAvail := c.renderCLIPath()
+
+	if npxLookErr == nil {
+		if npxErr := c.runBounded(ctx, "npx", skillsAddArgs(opts.Agents)...); npxErr == nil {
+			return nil
+		} else if len(opts.Agents) == 0 && cliAvail {
+			// npx is present but failed. The Render CLI fallback can't scope by
+			// agent, so only fall back for an unscoped run (F36); a scoped run
+			// surfaces the npx error rather than silently touching all agents.
+			if cliErr := c.runBounded(ctx, cliPath, renderSkillsArgs()...); cliErr != nil {
+				return fmt.Errorf("install skills: npx failed (%v); Render CLI fallback also failed: %w", npxErr, cliErr)
+			}
+			return nil
+		} else {
+			return fmt.Errorf("install skills via npx: %w", npxErr)
+		}
 	}
-	if cliPath, ok := c.renderCLIPath(); ok {
+
+	if cliAvail {
 		if len(opts.Agents) > 0 {
 			return fmt.Errorf("cannot scope skills to %s: the Render CLI fallback (render skills install) installs skills for all detected agents. Install Node/npx to scope skill installation by agent", agentNames(opts.Agents))
 		}
-		// The fallback only runs unscoped, so we want all detected tools and all
-		// skills. On a non-TTY the CLI emits text output, and --confirm makes it
-		// use defaults and skip every prompt (rather than blocking on EOF from a
-		// nil stdin). Run by absolute path so a stale PATH cannot resolve an
-		// unexpected or missing `render`.
-		return c.run(ctx, cliPath, "skills", "install", "--confirm", "--scope", "user", "-o", "text")
+		return c.runBounded(ctx, cliPath, renderSkillsArgs()...)
 	}
 	return errors.New("cannot install skills: install Node/npx or the Render CLI to add skills")
+}
+
+// runBounded runs a skills-install command under installTimeout so a stalled
+// child fails with a clear deadline error instead of hanging (F17).
+func (c *Component) runBounded(ctx context.Context, name string, args ...string) error {
+	ctx, cancel := context.WithTimeout(ctx, installTimeout)
+	defer cancel()
+	return c.run(ctx, name, args...)
+}
+
+// renderSkillsArgs is the fully non-interactive Render CLI skills-install
+// invocation (F04): on a non-TTY the CLI emits text output, and --confirm makes
+// it use defaults (all detected tools/skills, user scope) and skip every prompt
+// rather than blocking on EOF from a nil stdin.
+func renderSkillsArgs() []string {
+	return []string{"skills", "install", "--confirm", "--scope", "user", "-o", "text"}
 }
 
 // renderCLIPath resolves the Render CLI to an absolute path, preferring the

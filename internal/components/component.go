@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // ErrNotImplemented is returned by stubbed methods that have no behavior yet.

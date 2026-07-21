@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/render-oss/render-install-wizard/internal/configedit"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
-	"github.com/render-oss/render-install-wizard/internal/tools"
+	"github.com/render-lab/render-install-wizard/internal/configedit"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/tools"
 )
 
 // Tool configures the Render components into Cursor.

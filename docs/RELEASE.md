@@ -46,7 +46,7 @@ Native Windows curl/PowerShell path and optional enhancements — see [`FUTURE.m
 3. `release.yml` runs GoReleaser, which builds the darwin/linux × amd64/arm64 binaries
    (`render-setup_<os>_<arch>`) plus `checksums.txt` and creates a **draft** GitHub Release.
 4. Review the draft's assets, then publish it. `latest` now resolves to this release via
-   `https://github.com/render-oss/render-install-wizard/releases/latest/download/<asset>`.
+   `https://github.com/render-lab/render-install-wizard/releases/latest/download/<asset>`.
 5. Smoke-test the published artifacts (in a throwaway `HOME`):
    ```bash
    RENDER_SETUP_VERSION=vX.Y.Z sh scripts/agents.sh --version

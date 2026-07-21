@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // BinaryName is the on-disk name of the installed wizard binary.
@@ -19,7 +19,7 @@ const ChecksumsFileName = "checksums.txt"
 
 // ReleasesBaseURL is the base URL for published wizard release artifacts. Assets
 // are hosted on GitHub Releases so the "latest" download redirect is available.
-const ReleasesBaseURL = "https://github.com/render-oss/render-install-wizard/releases"
+const ReleasesBaseURL = "https://github.com/render-lab/render-install-wizard/releases"
 
 // LatestVersion is the version token that resolves to the newest release via
 // GitHub's /releases/latest/download/ redirect.

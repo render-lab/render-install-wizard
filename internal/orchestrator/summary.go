@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
 )
 
 // displayName returns a human-readable name for a tool, falling back to the ID.

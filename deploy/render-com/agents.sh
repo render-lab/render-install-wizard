@@ -10,7 +10,7 @@
 # forwarding any args. No sudo; everything lives under $RENDER_HOME.
 #
 # Read it before you pipe it. The source of truth for this script lives at
-# scripts/agents.sh in github.com/render-oss/render-install-wizard. The copy
+# scripts/agents.sh in github.com/render-lab/render-install-wizard. The copy
 # served by render.com (deploy/render-com/agents.sh) is kept byte-identical by CI.
 #
 # ALL logic is wrapped in main() and invoked on the very last line, so a
@@ -72,7 +72,7 @@ main() {
 	# ---- configuration (env with defaults) ----
 	# Binaries are published to GitHub Releases; RENDER_INSTALL_BASE_URL points at
 	# the releases base and can be overridden (e.g. for a mirror or a local test).
-	base_url="${RENDER_INSTALL_BASE_URL:-https://github.com/render-oss/render-install-wizard/releases}"
+	base_url="${RENDER_INSTALL_BASE_URL:-https://github.com/render-lab/render-install-wizard/releases}"
 	base_url="${base_url%/}"
 	version="${RENDER_SETUP_VERSION:-latest}"
 	render_home="${RENDER_HOME:-${HOME}/.render}"

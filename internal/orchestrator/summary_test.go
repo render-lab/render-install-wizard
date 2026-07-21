@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // TestTitleReflectsOutcome guards F14: the headline is derived from actual step

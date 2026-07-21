@@ -3,7 +3,7 @@ package wizard
 import (
 	"strings"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // Summary is the plain, end-state description of what the wizard will do: which

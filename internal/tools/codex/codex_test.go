@@ -8,9 +8,9 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/render"
-	"github.com/render-oss/render-install-wizard/internal/tools"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/render"
+	"github.com/render-lab/render-install-wizard/internal/tools"
 )
 
 // readConfig unmarshals ~/.codex/config.toml under home into a generic map.

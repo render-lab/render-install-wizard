@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/cliflags"
-	"github.com/render-oss/render-install-wizard/internal/ids"
-	"github.com/render-oss/render-install-wizard/internal/wizard"
+	"github.com/render-lab/render-install-wizard/internal/cliflags"
+	"github.com/render-lab/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/wizard"
 )
 
 // captureOutput redirects os.Stdout and os.Stderr for the duration of fn and

@@ -35,7 +35,7 @@ curl -fsSL render.com/agents.sh | sh
 
 The bootstrap is **git-owned, auditable, PR-able, and checksummed** — it is *not*
 a Sanity document. The source of truth is `scripts/agents.sh` in
-`github.com/render-oss/render-install-wizard`. The copy here is a verbatim mirror
+`github.com/render-lab/render-install-wizard`. The copy here is a verbatim mirror
 so the frontend can serve it without reaching back into another repo at request
 time.
 

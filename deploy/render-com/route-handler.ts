@@ -16,7 +16,7 @@
 //
 // THE SCRIPT IS VENDORED, NOT AUTHORED HERE:
 //   `agents.sh` is a byte-identical copy of scripts/agents.sh in
-//   github.com/render-oss/render-install-wizard. Do NOT hand-edit it here.
+//   github.com/render-lab/render-install-wizard. Do NOT hand-edit it here.
 //   The `sync-agents-sh.yml` CI job in that repo fails on any drift between the
 //   source script and the vendored copy, so this endpoint always serves the
 //   audited, checksummed bootstrap.

@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/render-oss/render-install-wizard/internal/ids"
+	"github.com/render-lab/render-install-wizard/internal/ids"
 )
 
 // fakeLookPath returns a lookPathFunc that resolves only the named binaries.
