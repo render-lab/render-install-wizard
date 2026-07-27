@@ -82,14 +82,15 @@ curl -i http://localhost:3000/agents.sh
   `force-static` so Next.js can cache the rendered response.
 - **Rollback:** revert the frontend PR (or pin a previous deploy). Users can also
   pin behavior at call time via the script's env knobs:
-  - `RENDER_INSTALL_BASE_URL` — override the download origin (default `https://render.com`)
+  - `RENDER_INSTALL_BASE_URL` — override the release download origin (default `https://github.com/render-lab/render-install-wizard/releases`; render.com only serves this script, not the binaries)
   - `RENDER_SETUP_VERSION` — pin the wizard version (default `latest`)
   - `RENDER_HOME` — override the install root (default `~/.render`)
 
 ## What the served script does (summary)
 
 Detect OS/arch (macOS, Linux, WSL; native Windows → friendly WinGet message) →
-download `render-setup_<version>_<os>_<arch>` + `checksums.txt` →
+download the version-less `render-setup_<os>_<arch>` + `checksums.txt` from GitHub
+Releases (the concrete version lives in the release-tag URL path) →
 **sha256-verify** → install to `~/.render/bin/render-setup` → idempotently update
 PATH (zsh/bash/fish) → re-attach `/dev/tty` and `exec` the wizard, forwarding args.
 No `sudo`; everything lives under `$RENDER_HOME`. The whole script is wrapped in

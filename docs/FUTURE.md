@@ -42,6 +42,11 @@ per-tool config paths/detection for `GOOS == "windows"`; (3) write `agents.ps1` 
 
 ## Optional enhancements
 
+- **Cross-repo `agents.sh` sync (F19)** — CI keeps `scripts/agents.sh` == `deploy/render-com/agents.sh`
+  within this repo, but nothing enforces that the website's vendored copy
+  (`renderinc/website:app/agents.sh/agents.sh`) stays in sync with this repo's source. Today it's a
+  manual re-vendor whenever the bootstrap changes. A cross-repo check (or having the website consume a
+  versioned artifact this repo publishes) would prevent the frontend from serving a stale script.
 - **Wizard next-steps from Sanity** — next-steps are currently built locally (`render.PluginFor` +
   static lines). Optionally fetch per-tool copy from `render.com/agents/*.md` so the wizard stays in
   lockstep with the website. (May want a structured `nextSteps` field — see Open questions.)
