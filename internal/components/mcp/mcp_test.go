@@ -11,6 +11,16 @@ import (
 	"github.com/render-lab/render-install-wizard/internal/render"
 )
 
+// TestMain makes these tests hermetic: it clears the ambient config-home
+// overrides (e.g. a CI runner's XDG_CONFIG_HOME) so path resolution stays under
+// the injected temp home.
+func TestMain(m *testing.M) {
+	for _, k := range []string{"XDG_CONFIG_HOME", "OPENCODE_CONFIG", "CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
+		_ = os.Unsetenv(k)
+	}
+	os.Exit(m.Run())
+}
+
 func TestDetectFindsMCPEntry(t *testing.T) {
 	home := t.TempDir()
 	path, ok := render.MCPConfigPath(ids.ToolCursor, home)

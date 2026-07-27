@@ -13,6 +13,16 @@ import (
 	"github.com/render-lab/render-install-wizard/internal/tools"
 )
 
+// TestMain makes these tests hermetic: it clears the ambient config-home
+// overrides (e.g. a CI runner's CODEX_HOME) so path resolution stays under the
+// injected temp home. Tests that exercise an override set it via t.Setenv.
+func TestMain(m *testing.M) {
+	for _, k := range []string{"XDG_CONFIG_HOME", "OPENCODE_CONFIG", "CLAUDE_CONFIG_DIR", "CODEX_HOME"} {
+		_ = os.Unsetenv(k)
+	}
+	os.Exit(m.Run())
+}
+
 // readConfig unmarshals ~/.codex/config.toml under home into a generic map.
 func readConfig(t *testing.T, home string) map[string]any {
 	t.Helper()
