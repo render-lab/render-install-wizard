@@ -18,6 +18,9 @@ artifact="render-setup_${os}_${arch}"
 binsrc="$(find "$DIST" -type f -name render-setup -path "*${os}_${arch}*" | head -1)"
 [ -n "$binsrc" ] || { echo "FAIL: no snapshot binary for ${os}/${arch} under $DIST"; exit 1; }
 
+# shellcheck source=test/e2e/serve.sh
+. "$(dirname "$0")/serve.sh"
+
 fail=0
 
 # expect_abort DESC WEBROOT: serve WEBROOT, run the bootstrap, and assert it
@@ -25,9 +28,12 @@ fail=0
 expect_abort() {
 	desc="$1"; web="$2"
 	home="$(mktemp -d)"
-	(cd "$web" && python3 -m http.server "$PORT" >/dev/null 2>&1 &
-		echo $! >"$web/.pid")
-	sleep 1.2
+	if ! serve_start "$web" "$PORT"; then
+		echo "  FAIL: $desc (file server did not start)" >&2
+		fail=1
+		rm -rf "$home"
+		return
+	fi
 
 	if HOME="$home" RENDER_HOME="$home/.render" \
 		RENDER_INSTALL_BASE_URL="http://127.0.0.1:${PORT}" RENDER_SETUP_VERSION="testv" \
@@ -36,7 +42,7 @@ expect_abort() {
 	else
 		code=$?
 	fi
-	kill "$(cat "$web/.pid")" 2>/dev/null || true
+	serve_stop
 
 	if [ "$code" -ne 0 ] && [ ! -e "$home/.render/bin/render-setup" ]; then
 		echo "  PASS: $desc (aborted, nothing installed)"

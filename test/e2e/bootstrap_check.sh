@@ -25,9 +25,13 @@ mkdir -p "$web/download/testv" "$home"
 cp "$binsrc" "$web/download/testv/$artifact"
 cp "$DIST/checksums.txt" "$web/download/testv/checksums.txt"
 
-(cd "$web" && python3 -m http.server "$PORT" >/dev/null 2>&1 &
-	echo $! >"$tmp/pid")
-sleep 1.5
+# shellcheck source=test/e2e/serve.sh
+. "$(dirname "$0")/serve.sh"
+if ! serve_start "$web" "$PORT"; then
+	echo "BOOTSTRAP E2E FAILED (file server did not start)"
+	rm -rf "$tmp"
+	exit 1
+fi
 
 echo "== bootstrap curl|sh flow (served snapshot, ${os}/${arch}) =="
 if HOME="$home" RENDER_HOME="$home/.render" \
@@ -38,7 +42,7 @@ else
 	code=$?
 fi
 
-kill "$(cat "$tmp/pid")" 2>/dev/null || true
+serve_stop
 
 ok=0
 [ "$code" -eq 0 ] || { echo "FAIL: bootstrap exited $code"; ok=1; }
