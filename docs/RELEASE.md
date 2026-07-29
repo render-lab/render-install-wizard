@@ -35,22 +35,57 @@ Native Windows curl/PowerShell path and optional enhancements — see [`FUTURE.m
 
 ---
 
-## Runbook — cutting a release (repeatable)
+## Runbook — release + go live (turnkey)
 
-1. Ensure `main` is green (CI: build/vet/gofmt/test/tidy + E2E).
-2. Pick a semver tag `vX.Y.Z` and push it:
+Binaries are hosted on **GitHub Releases**; render.com serves **only** the `agents.sh`
+script (see [`../deploy/render-com/`](../deploy/render-com/)). The script downloads the
+binary from GitHub, so both must be in place. Do these in order.
+
+### 1. Release the wizard binary
+
+1. Ensure `main` is green (CI: build / vet / gofmt / golangci-lint / test / tidy).
+2. Tag and push a semver tag:
    ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
+   git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-3. `release.yml` runs GoReleaser, which builds the darwin/linux × amd64/arm64 binaries
-   (`render-setup_<os>_<arch>`) plus `checksums.txt` and creates a **draft** GitHub Release.
-4. Review the draft's assets, then publish it. `latest` now resolves to this release via
-   `https://github.com/render-lab/render-install-wizard/releases/latest/download/<asset>`.
-5. Smoke-test the published artifacts (in a throwaway `HOME`):
+   `release.yml` runs a preflight (the workflow must run in `render-lab/render-install-wizard`,
+   else a repo-scoped token can't publish) then GoReleaser, producing
+   `render-setup_<os>_<arch>` (darwin/linux × amd64/arm64) + `checksums.txt` as a **draft** release.
+3. **Publish** the draft — drafts are *not* served by the `latest/download` redirect:
    ```bash
-   RENDER_SETUP_VERSION=vX.Y.Z sh scripts/agents.sh --version
+   gh release edit vX.Y.Z --draft=false --repo render-lab/render-install-wizard
    ```
+   The repo must be **public** (one-time) so assets download anonymously. Verify:
+   ```bash
+   curl -fsSL -o /dev/null -w 'binary %{http_code}\n' \
+     https://github.com/render-lab/render-install-wizard/releases/latest/download/render-setup_darwin_arm64
+   curl -fsSL -o /dev/null -w 'sums   %{http_code}\n' \
+     https://github.com/render-lab/render-install-wizard/releases/latest/download/checksums.txt
+   ```
+
+### 2. Ship the script on render.com
+
+4. If `scripts/agents.sh` changed, re-vendor it into the website repo (`renderinc/website`) and
+   open a PR — `app/agents.sh/route.ts` + a **byte-identical** `app/agents.sh/agents.sh`. Render
+   builds a preview automatically.
+5. Preview smoke — confirm serving, then run the full pipe across clean container images:
+   ```bash
+   curl -i https://<preview-host>/agents.sh                 # 200, text/x-shellscript, nosniff
+   test/e2e/live_check.sh https://<preview-host>/agents.sh  # Docker matrix (glibc/musl; add PLATFORMS for arches)
+   ```
+6. Merge the website PR → production deploy.
+
+### 3. Production smoke
+
+7. Cloudflare fronts render.com, so use a cache-buster on the first hit:
+   ```bash
+   curl -fsSL "https://render.com/agents.sh?nocache=$(date +%s)" | sh
+   test/e2e/live_check.sh https://render.com/agents.sh
+   ```
+
+> Tip for a fully contained local check without Docker: run with a throwaway home so nothing
+> touches your machine — `SBX=$(mktemp -d); (export HOME=$SBX RENDER_HOME=$SBX/.render;
+> curl -fsSL <url>/agents.sh | sh -s -- --dry-run --json); rm -rf "$SBX"`.
 
 ## Rollback
 
