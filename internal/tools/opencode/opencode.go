@@ -139,6 +139,11 @@ func (t *Tool) Unconfigure(ctx context.Context) error {
 // uses the "{env:VAR}" interpolation form (not the shell "$VAR" form), so the
 // reference is built from render.APIKeyEnvVar directly — an env-ref, never a
 // stored secret.
+//
+// API-key mode also sets "oauth": false. OpenCode otherwise attempts its OAuth
+// flow for a remote server, which competes with the header credential and leaves
+// the server failing to authenticate; the explicit false is what pins it to
+// header-based auth.
 func (t *Tool) mcpEntry() map[string]any {
 	entry := map[string]any{
 		"type":    "remote",
@@ -146,6 +151,7 @@ func (t *Tool) mcpEntry() map[string]any {
 		"enabled": true,
 	}
 	if t.auth == render.AuthModeAPIKey {
+		entry["oauth"] = false
 		entry["headers"] = map[string]any{
 			"Authorization": fmt.Sprintf("Bearer {env:%s}", render.APIKeyEnvVar),
 		}

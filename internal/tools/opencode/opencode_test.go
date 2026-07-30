@@ -100,6 +100,29 @@ func TestConfigureAPIKeyWritesEnvRefHeader(t *testing.T) {
 	if got := headers["Authorization"]; got != want {
 		t.Errorf("Authorization = %v, want %v", got, want)
 	}
+	// Without an explicit oauth:false, OpenCode still attempts its OAuth flow for
+	// a remote server, which competes with the header credential and leaves the
+	// server unable to authenticate.
+	if got, ok := entry["oauth"]; !ok || got != false {
+		t.Errorf("oauth = %#v (present=%v), want false so header auth is used", got, ok)
+	}
+}
+
+// TestConfigureOAuthOmitsOAuthFalse keeps the default path credential-free: in
+// OAuth mode the entry must not disable OAuth.
+func TestConfigureOAuthOmitsOAuthFalse(t *testing.T) {
+	home := t.TempDir()
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+
+	sel := tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}
+	if err := tool.Configure(context.Background(), sel); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	entry := renderEntry(t, readConfig(t, home))
+	if _, present := entry["oauth"]; present {
+		t.Errorf("OAuth mode must not write an oauth key: %#v", entry["oauth"])
+	}
 }
 
 func TestConfigureMergeNotClobber(t *testing.T) {
