@@ -1,9 +1,12 @@
 package codex
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	toml "github.com/pelletier/go-toml/v2"
@@ -68,6 +71,11 @@ func TestConfigureOAuth(t *testing.T) {
 	}
 }
 
+// TestConfigureAPIKey pins the auth shape Codex actually honors:
+// bearer_token_env_var naming the variable that holds the token. http_headers is
+// wrong here because Codex treats those values as literal strings — a shell-style
+// "Bearer $RENDER_API_KEY" would be transmitted verbatim, never expanded — and an
+// inline bearer_token is rejected outright.
 func TestConfigureAPIKey(t *testing.T) {
 	home := t.TempDir()
 	tool := &Tool{home: home, auth: render.AuthModeAPIKey}
@@ -77,16 +85,143 @@ func TestConfigureAPIKey(t *testing.T) {
 	}
 
 	server := renderServer(t, readConfig(t, home))
-	headers, ok := server["http_headers"].(map[string]any)
-	if !ok {
-		t.Fatalf("http_headers missing or wrong type: %#v", server["http_headers"])
+	if got := server["bearer_token_env_var"]; got != render.APIKeyEnvVar {
+		t.Errorf("bearer_token_env_var = %v, want %v", got, render.APIKeyEnvVar)
 	}
-	wantValue, _ := render.AuthorizationHeader(render.AuthModeAPIKey)
-	if got := headers["Authorization"]; got != wantValue {
-		t.Errorf("Authorization = %v, want %v", got, wantValue)
+	if _, present := server["http_headers"]; present {
+		t.Errorf("http_headers must not be used for auth (values are literal, not expanded): %#v", server["http_headers"])
 	}
-	if wantValue != "Bearer $"+render.APIKeyEnvVar {
-		t.Errorf("expected shell env-ref form, got %q", wantValue)
+	if _, present := server["bearer_token"]; present {
+		t.Error("inline bearer_token is rejected by Codex and would also write a secret to disk")
+	}
+}
+
+// TestConfigureEnablesRemoteMCPClient is the regression guard for the bug that
+// made the Render entry inert: a url-based server is ignored by Codex unless
+// experimental_use_rmcp_client is true, and the flag must appear before the
+// [mcp_servers.*] tables it governs.
+func TestConfigureEnablesRemoteMCPClient(t *testing.T) {
+	home := t.TempDir()
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	if got := readConfig(t, home)[rmcpClientKey]; got != true {
+		t.Errorf("%s = %#v, want true; without it Codex ignores the url-based render entry", rmcpClientKey, got)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flagAt := bytes.Index(raw, []byte(rmcpClientKey))
+	tableAt := bytes.Index(raw, []byte("[mcp_servers"))
+	if flagAt < 0 || tableAt < 0 || flagAt > tableAt {
+		t.Errorf("%s must precede the [mcp_servers.*] tables; got flag@%d table@%d in:\n%s", rmcpClientKey, flagAt, tableAt, raw)
+	}
+}
+
+// TestConfigurePrefersCodexCLI checks the delegation path: when the Codex CLI is
+// available the wizard lets Codex perform its own edit (which preserves the
+// file's comments) rather than reserializing config.toml itself.
+func TestConfigurePrefersCodexCLI(t *testing.T) {
+	home := t.TempDir()
+	var got [][]string
+	tool := &Tool{
+		home:     home,
+		auth:     render.AuthModeOAuth,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/codex", nil },
+		run: func(_ context.Context, name string, args ...string) error {
+			got = append(got, append([]string{name}, args...))
+			return nil
+		},
+	}
+
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one delegated command, got %#v", got)
+	}
+	want := []string{"codex", "mcp", "add", render.MCPServerName, "--url", render.MCPServerURL}
+	if !slices.Equal(got[0], want) {
+		t.Errorf("delegated command = %v, want %v", got[0], want)
+	}
+	// The wizard must not also write the table itself, or it would undo Codex's
+	// formatting-preserving edit.
+	cfg := readConfig(t, home)
+	if servers, ok := cfg["mcp_servers"].(map[string]any); ok {
+		if _, wrote := servers[render.MCPServerName]; wrote {
+			t.Error("wizard wrote the render table itself despite delegating to the CLI")
+		}
+	}
+	// The root flag is still ours to guarantee.
+	if got := cfg[rmcpClientKey]; got != true {
+		t.Errorf("%s = %#v, want true even on the delegated path", rmcpClientKey, got)
+	}
+}
+
+// TestConfigureFallsBackWhenCLIFails ensures a broken or changed `codex mcp add`
+// never blocks configuration: the file writer takes over.
+func TestConfigureFallsBackWhenCLIFails(t *testing.T) {
+	home := t.TempDir()
+	tool := &Tool{
+		home:     home,
+		auth:     render.AuthModeOAuth,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/codex", nil },
+		run:      func(context.Context, string, ...string) error { return errors.New("unknown flag --url") },
+	}
+
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	server := renderServer(t, readConfig(t, home))
+	if got := server["url"]; got != render.MCPServerURL {
+		t.Errorf("fallback did not write the render entry: url = %v", got)
+	}
+}
+
+// TestConfigurePreservesCommentsOnDelegatedPath is the user-visible payoff of
+// delegation: a hand-maintained config.toml keeps its comments, because the only
+// edit the wizard makes itself is the textual root-flag insert.
+func TestConfigurePreservesCommentsOnDelegatedPath(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "# I hand-tuned this. Keep my comment.\nmodel = \"o3\"\n\n[mcp_servers.mine]\n# staging box\nurl = \"https://staging.internal/mcp\"\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{
+		home:     home,
+		auth:     render.AuthModeOAuth,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/codex", nil },
+		run:      func(context.Context, string, ...string) error { return nil },
+	}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"# I hand-tuned this. Keep my comment.",
+		"# staging box",
+		"model = \"o3\"",
+		"[mcp_servers.mine]",
+	} {
+		if !bytes.Contains(after, []byte(want)) {
+			t.Errorf("lost %q from a hand-maintained config; file is now:\n%s", want, after)
+		}
 	}
 }
 

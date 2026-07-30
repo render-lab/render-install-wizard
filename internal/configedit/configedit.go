@@ -29,7 +29,12 @@
 // TOML is still edited via a map model (MergeTOMLFile/SetTOMLValue/DeleteTOMLPath):
 // it unmarshals, mutates, and re-marshals, so TOML comments and original section
 // ordering are not preserved. Round-trip tests for TOML therefore assert
-// *semantic* equality rather than byte equality.
+// *semantic* equality rather than byte equality. Callers that can delegate the
+// edit to the owning tool's own CLI should prefer that and treat these helpers as
+// the fallback.
+//
+// EnsureTOMLRootKey is the exception: it inserts a single root-level assignment
+// textually, so it preserves the file byte-for-byte apart from the inserted line.
 package configedit
 
 import (
@@ -150,6 +155,72 @@ func SetTOMLValue(path string, value any, keys ...string) error {
 		return fmt.Errorf("configedit: encode TOML for %s: %w", path, err)
 	}
 	return atomicWrite(path, out)
+}
+
+// EnsureTOMLRootKey ensures the TOML file at path carries a root-level
+// assignment of key, inserting "key = literal" at the very top of the document
+// when it is absent. literal is written verbatim, so callers pass already-encoded
+// TOML (e.g. "true").
+//
+// Unlike SetTOMLValue this is a textual insert rather than a map round-trip, so
+// every other byte — comments, key order, table order, quoting style — survives
+// untouched. Inserting at the top also guarantees the assignment precedes every
+// [table] header, which matters for root-level settings that a reader only
+// honors when they appear before the tables they govern.
+//
+// It is a no-op when a root-level assignment for key already exists. Assignments
+// of the same name *inside* a table do not count: those belong to that table, not
+// to the document root.
+func EnsureTOMLRootKey(path, key, literal string) error {
+	if key == "" {
+		return errors.New("configedit: EnsureTOMLRootKey requires a key")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("configedit: read %s: %w", path, err)
+		}
+		data = nil
+	}
+	if tomlHasRootKey(data, key) {
+		return nil
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(key)
+	buf.WriteString(" = ")
+	buf.WriteString(literal)
+	buf.WriteByte('\n')
+	if len(bytes.TrimSpace(data)) > 0 {
+		// Blank line so the inserted assignment reads as its own stanza rather
+		// than running into whatever the file previously started with.
+		buf.WriteByte('\n')
+		buf.Write(data)
+	}
+	return atomicWrite(path, buf.Bytes())
+}
+
+// tomlHasRootKey reports whether data assigns key at the document root, i.e.
+// before the first [table] header. Comments and blank lines are skipped; the
+// first table header ends the root section.
+func tomlHasRootKey(data []byte, key string) bool {
+	for _, raw := range bytes.Split(data, []byte("\n")) {
+		line := strings.TrimSpace(string(raw))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			return false
+		}
+		name, _, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.Trim(strings.TrimSpace(name), `"'`) == key {
+			return true
+		}
+	}
+	return false
 }
 
 // DeleteJSONPath removes the nested key identified by keys (e.g. "mcpServers",
