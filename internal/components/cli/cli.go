@@ -8,11 +8,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -34,6 +34,31 @@ import (
 const (
 	brewTimeout     = 5 * time.Minute
 	downloadTimeout = 5 * time.Minute
+	// versionProbeTimeout bounds the identity probe in Detect. It is short because
+	// this runs during planning, before anything is installed, and a binary that
+	// will not answer a help request promptly is not one to depend on.
+	versionProbeTimeout = 10 * time.Second
+)
+
+// renderCLIHelpMarker is the header the Render CLI prints atop its help output
+// ("Render CLI v<version>", from cmd/helptemplate.go upstream). It identifies the
+// binary as Render's rather than some other program that happens to be named
+// "render"; see Component.isRenderCLI.
+const renderCLIHelpMarker = "Render CLI"
+
+// Size caps on untrusted input. Both the HTTP bodies and the zip entries the
+// wizard reads are fully buffered in memory, and both are attacker-controlled if
+// the release host is compromised or a proxy interposes: without a cap, a response
+// that never ends or a zip entry that expands enormously would grow the heap until
+// the process is killed. Reading one byte past the cap is enough to detect the
+// overrun, so the excess is bounded too.
+//
+// The limits sit far above any legitimate asset — the CLI archive is single-digit
+// MiB and the checksums file is a few hundred bytes — so a real release cannot
+// trip them.
+const (
+	maxFetchBytes       = 64 << 20 // 64 MiB
+	maxArchiveFileBytes = 64 << 20 // 64 MiB
 )
 
 // Component installs and manages the Render CLI.
@@ -56,9 +81,12 @@ type Component struct {
 	run func(ctx context.Context, name string, args ...string) error
 	// runOutput executes a command and returns its combined output plus error.
 	runOutput func(ctx context.Context, name string, args ...string) (string, error)
-	// fetch downloads the bytes at a URL (the release metadata and archive).
+	// fetch downloads the bytes at a URL (the release archive and checksums).
 	// Injectable so tests never hit the network.
 	fetch func(ctx context.Context, url string) ([]byte, error)
+	// redirectTarget returns where a URL redirects to, without following it. Used
+	// to resolve the latest release tag. Injectable so tests never hit the network.
+	redirectTarget func(ctx context.Context, url string) (string, error)
 	// ensurePath makes binDir usable in this process and persists it to the
 	// user's shell configuration. Injectable so tests avoid mutating the real
 	// environment or shell rc files.
@@ -74,14 +102,15 @@ func New() *Component {
 		home = ""
 	}
 	return &Component{
-		home:       home,
-		goos:       runtime.GOOS,
-		goarch:     runtime.GOARCH,
-		lookPath:   exec.LookPath,
-		run:        execx.Run,
-		runOutput:  execx.CombinedOutput,
-		fetch:      httpFetch,
-		ensurePath: ensurePathIn(home),
+		home:           home,
+		goos:           runtime.GOOS,
+		goarch:         runtime.GOARCH,
+		lookPath:       exec.LookPath,
+		run:            execx.Run,
+		runOutput:      execx.CombinedOutput,
+		fetch:          httpFetch,
+		redirectTarget: httpRedirectTarget,
+		ensurePath:     ensurePathIn(home),
 	}
 }
 
@@ -94,19 +123,61 @@ func (c *Component) binPath() string {
 	return filepath.Join(c.home, ".render", "bin", render.CLIBinaryName)
 }
 
-// Detect reports whether the Render CLI is already installed. It returns true if
-// the binary resolves on PATH via lookPath, or if the managed binary exists at
-// <home>/.render/bin/render.
+// Detect reports whether the Render CLI is already installed: the managed binary
+// exists at <home>/.render/bin/render, or a binary named "render" on PATH proves
+// itself to be the Render CLI.
+//
+// The managed path is checked first and trusted without a probe, since this wizard
+// is what put the binary there.
+//
+// A PATH hit is verified rather than believed. "render" is a plausible name for an
+// unrelated program — a template renderer, a graphics tool, a local wrapper script
+// — and treating any such binary as the CLI would make the wizard report the
+// component installed and skip installing it, leaving later steps that shell out
+// to `render` (a skills install, for instance) to fail against a program that
+// knows nothing about Render.
+//
+// An ambiguous probe resolves to "not installed", so the failure mode is a
+// redundant install rather than a missing one. That is safe in both directions:
+// installing lands the real CLI in the wizard-owned bin dir, which is prepended to
+// PATH and so takes precedence over the impostor.
 func (c *Component) Detect(ctx context.Context) (bool, error) {
-	if c.lookPath != nil {
-		if _, err := c.lookPath(render.CLIBinaryName); err == nil {
-			return true, nil
-		}
-	}
 	if info, err := os.Stat(c.binPath()); err == nil && !info.IsDir() {
 		return true, nil
 	}
+	if c.lookPath != nil {
+		if path, err := c.lookPath(render.CLIBinaryName); err == nil {
+			return c.isRenderCLI(ctx, path), nil
+		}
+	}
 	return false, nil
+}
+
+// isRenderCLI reports whether the executable at path is the Render CLI, by asking
+// it for help and looking for the header the CLI prints there.
+//
+// --help is the probe rather than --version because it is self-contained: the
+// CLI's --version also performs an upgrade check against the network, which would
+// make detection depend on connectivity, and its output ("render v2.20.0") names
+// only the binary — which any program called "render" would also print. The help
+// header ("Render CLI v…") is specific to this tool.
+//
+// This is a heuristic, and deliberately a conservative one: an upstream change to
+// that header would cost a redundant install, not a broken one. When no runner is
+// wired the probe is unavailable, so the PATH hit is taken at face value.
+func (c *Component) isRenderCLI(ctx context.Context, path string) bool {
+	if c.runOutput == nil {
+		return true
+	}
+	pctx, cancel := context.WithTimeout(ctx, versionProbeTimeout)
+	defer cancel()
+	out, err := c.runOutput(pctx, path, "--help")
+	if err != nil {
+		return false
+	}
+	// Substring rather than prefix: the CLI styles the header, so escape sequences
+	// may surround it, and help output is preceded by nothing else worth matching.
+	return strings.Contains(out, renderCLIHelpMarker)
 }
 
 // Status returns the current status of the Render CLI component. When detected,
@@ -191,12 +262,16 @@ func (c *Component) installFromRelease(ctx context.Context, opts components.Opti
 			return fmt.Errorf("resolve latest render CLI version: %w", err)
 		}
 		version = v
+	} else if err := render.ValidateVersion(version); err != nil {
+		// A --pin-version value is interpolated into the release URL and the
+		// archive filename, so it is checked before it can steer either.
+		return fmt.Errorf("invalid render CLI version: %w", err)
 	}
 
-	url := render.CLIArchiveURL(version, c.goos, c.goarch)
-	archive, err := c.fetch(ctx, url)
+	archiveURL := render.CLIArchiveURL(version, c.goos, c.goarch)
+	archive, err := c.fetch(ctx, archiveURL)
 	if err != nil {
-		return fmt.Errorf("download render CLI from %s: %w", url, err)
+		return fmt.Errorf("download render CLI from %s: %w", archiveURL, err)
 	}
 	// Verify the archive against the release's published checksums before it is
 	// unpacked or executed, extending the bootstrap's "every binary verified"
@@ -206,7 +281,7 @@ func (c *Component) installFromRelease(ctx context.Context, opts components.Opti
 	}
 	binary, err := extractCLIBinary(archive)
 	if err != nil {
-		return fmt.Errorf("extract render CLI from %s: %w", url, err)
+		return fmt.Errorf("extract render CLI from %s: %w", archiveURL, err)
 	}
 
 	dest := c.binPath()
@@ -268,28 +343,58 @@ func checksumFor(sums []byte, filename string) (string, bool) {
 	return "", false
 }
 
-// latestVersion resolves the newest Render CLI release tag from the GitHub API.
+// latestVersion resolves the newest Render CLI release tag by reading where
+// render.CLILatestReleaseURL redirects, rather than by querying the GitHub API.
+// See that constant for why: the API's unauthenticated rate limit is per source
+// IP and shared, so a NAT or CI runner can exhaust it with unrelated traffic and
+// leave the wizard unable to resolve a version at all.
 func (c *Component) latestVersion(ctx context.Context) (string, error) {
-	body, err := c.fetch(ctx, render.CLILatestReleaseAPIURL)
+	loc, err := c.redirectTarget(ctx, render.CLILatestReleaseURL)
 	if err != nil {
 		return "", err
 	}
-	var rel struct {
-		TagName string `json:"tag_name"`
+	return tagFromReleaseLocation(loc)
+}
+
+// tagFromReleaseLocation extracts the release tag from the Location that
+// GitHub's releases/latest alias redirects to (.../releases/tag/<tag>).
+//
+// The tag is required to be the final path segment of a well-formed release-tag
+// URL and is then validated, because it goes on to build the download and
+// checksum URLs: a Location that does not have this exact shape means we are not
+// reading what we think we are, and guessing at it risks fetching from a path we
+// did not intend.
+func tagFromReleaseLocation(loc string) (string, error) {
+	u, err := url.Parse(loc)
+	if err != nil {
+		return "", fmt.Errorf("parse latest-release redirect %q: %w", loc, err)
 	}
-	if err := json.Unmarshal(body, &rel); err != nil {
-		return "", fmt.Errorf("parse release metadata: %w", err)
+	// u.Path is percent-decoded, so the checks below see the real segments rather
+	// than an encoded form that could hide a separator.
+	idx := strings.Index(u.Path, render.CLILatestReleaseTagSegment)
+	if idx < 0 {
+		return "", fmt.Errorf("latest-release redirect %q is not a release-tag URL", loc)
 	}
-	if rel.TagName == "" {
-		return "", errors.New("release metadata missing tag_name")
+	tag := strings.Trim(u.Path[idx+len(render.CLILatestReleaseTagSegment):], "/")
+	if tag == "" {
+		return "", fmt.Errorf("latest-release redirect %q carries no tag", loc)
 	}
-	return rel.TagName, nil
+	if err := render.ValidateVersion(tag); err != nil {
+		return "", fmt.Errorf("latest-release redirect %q: %w", loc, err)
+	}
+	return tag, nil
 }
 
 // extractCLIBinary returns the CLI executable bytes from a release zip archive.
 // The official archive contains the binary named "cli_v*"; we match that first
 // and fall back to the first regular file so a future layout change degrades
 // gracefully.
+//
+// The extracted entry is capped at maxArchiveFileBytes. A zip stores the
+// decompressed size in its own header, so a small archive can claim — or simply
+// deliver — gigabytes of output; the cap is enforced against both the declared
+// size and the bytes actually read, since a hostile archive can understate one to
+// get past a check on the other.
 func extractCLIBinary(zipBytes []byte) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
 	if err != nil {
@@ -311,21 +416,28 @@ func extractCLIBinary(zipBytes []byte) ([]byte, error) {
 	if chosen == nil {
 		return nil, errors.New("archive contained no files")
 	}
+	if chosen.UncompressedSize64 > maxArchiveFileBytes {
+		return nil, fmt.Errorf("archive entry %s declares %d bytes, exceeding the %d byte limit", chosen.Name, chosen.UncompressedSize64, maxArchiveFileBytes)
+	}
 	rc, err := chosen.Open()
 	if err != nil {
 		return nil, fmt.Errorf("open %s in archive: %w", chosen.Name, err)
 	}
 	defer rc.Close()
-	data, err := io.ReadAll(rc)
+	data, err := io.ReadAll(io.LimitReader(rc, maxArchiveFileBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s from archive: %w", chosen.Name, err)
+	}
+	if len(data) > maxArchiveFileBytes {
+		return nil, fmt.Errorf("archive entry %s exceeds the %d byte limit", chosen.Name, maxArchiveFileBytes)
 	}
 	return data, nil
 }
 
-// httpFetch GETs url and returns the response body, erroring on non-200 status.
-func httpFetch(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// httpFetch GETs rawURL and returns the response body, erroring on non-200 status
+// or on a body exceeding maxFetchBytes.
+func httpFetch(ctx context.Context, rawURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -335,9 +447,50 @@ func httpFetch(ctx context.Context, url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: unexpected status %s", url, resp.Status)
+		return nil, fmt.Errorf("GET %s: unexpected status %s", rawURL, resp.Status)
 	}
-	return io.ReadAll(resp.Body)
+	// Read one byte past the cap so an oversized body is detected rather than
+	// silently truncated: a truncated archive would fail checksum verification,
+	// reporting a corrupt download for what is really a size overrun.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFetchBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxFetchBytes {
+		return nil, fmt.Errorf("GET %s: response exceeds %d byte limit", rawURL, maxFetchBytes)
+	}
+	return body, nil
+}
+
+// httpRedirectTarget issues a HEAD for rawURL with redirect following disabled and
+// returns the Location the server points at. It errors unless the response is a
+// redirect carrying a Location.
+//
+// HEAD keeps this to headers only, and http.ErrUseLastResponse is what makes the
+// redirect observable: the default client would transparently follow it and hand
+// back the destination page, discarding the Location that is the entire point of
+// the request.
+func httpRedirectTarget(ctx context.Context, rawURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return "", fmt.Errorf("HEAD %s: expected a redirect, got %s", rawURL, resp.Status)
+	}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("HEAD %s: %s carried no Location header", rawURL, resp.Status)
+	}
+	return loc, nil
 }
 
 // ensurePathIn returns an ensurePath function bound to home. It prepends binDir

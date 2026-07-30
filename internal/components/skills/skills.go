@@ -113,13 +113,14 @@ func hasRenderSkill(dir string) bool {
 // CLI via npx (the documented primary path), pinned to render.SkillsCLISpec and
 // built fully non-interactive from the scope:
 //
-//   - Unscoped (opts.Agents empty): `-y skills@<ver> add <repo> --all -g`
-//     installs every skill to all detected agents (and the universal
+//   - Unscoped (opts.Agents empty): `--ignore-scripts -y skills@<ver> add <repo>
+//     --all -g` installs every skill to all detected agents (and the universal
 //     ~/.agents/skills dir) without prompts, delegating agent detection to the
 //     official installer.
-//   - Scoped (opts.Agents non-empty): `-y skills@<ver> add <repo> --skill *
-//     -a <agent>… -g -y` installs every skill to only the named agents, so an
-//     explicit --agent scope never touches unrelated agent environments.
+//   - Scoped (opts.Agents non-empty): `--ignore-scripts -y skills@<ver> add
+//     <repo> --skill * -a <agent>… -g -y` installs every skill to only the named
+//     agents, so an explicit --agent scope never touches unrelated agent
+//     environments.
 //
 // When npx is unavailable it falls back to the Render CLI, run by absolute path
 // as `render skills install --confirm --scope user -o text` — non-interactive
@@ -209,8 +210,17 @@ func (c *Component) renderCLIPath() (string, bool) {
 // removal of that universal directory leave a dangling symlink behind in every
 // agent. Copying keeps each agent's directory self-contained, so removing one
 // location never breaks another.
+//
+// --ignore-scripts comes first, before the package spec, so npm applies it to the
+// whole temporary install rather than to the executed command. It suppresses
+// lifecycle scripts (preinstall/install/postinstall) across the entire dependency
+// tree, which is the usual vehicle for a compromised npm package. The skills CLI
+// declares no install scripts, so nothing legitimate is lost — this closes the
+// path a malicious dependency would take. It cannot substitute for verifying the
+// code itself: see render.SkillsCLISpec for what the version pin does and does
+// not guarantee.
 func skillsAddArgs(agents []ids.ToolID) []string {
-	args := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo}
+	args := []string{"--ignore-scripts", "-y", render.SkillsCLISpec, "add", render.SkillsRepo}
 	if len(agents) == 0 {
 		return append(args, "--all", "-g", "--copy")
 	}

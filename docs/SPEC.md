@@ -198,7 +198,12 @@ The wizard writes config via the shell-automatable **config-file path** for ever
 ## Security & robustness checklist
 
 - `set -eu`, `main()`-wrapper (no partial execution on truncated downloads).
-- Checksum-verify every downloaded binary; checksums served separately from artifacts.
+- Checksum-verify every downloaded binary before executing it. This proves integrity, not
+  authenticity: the manifest ships from the same release over the same channel as the artifact, so it
+  does not defend against a compromised release host or an intercepted transport. Authenticity comes
+  from the cosign signature and SLSA provenance on each release, which the bootstrap cannot check
+  itself (that needs `cosign`/`gh` locally). Transport is pinned to HTTPS across redirects so the
+  channel cannot be downgraded. See [`SECURITY-MODEL.md`](SECURITY-MODEL.md).
 - No `sudo` — the wizard installs the Render CLI under `~/.render/bin` and edits the tools' own
   config files only; the curl bootstrap runs the wizard ephemerally (nothing of its own persists).
 - Read prompts from `/dev/tty` only when openable; full non-interactive fallback otherwise (CI/agents).

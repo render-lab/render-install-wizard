@@ -15,8 +15,15 @@ Render MCP server into each one (merge-not-clobber), installs the official skill
 the Render CLI — idempotently, and non-interactively for agents/CI.
 
 > **Read it before you pipe it.** The bootstrap lives in [`scripts/agents.sh`](scripts/agents.sh),
-> it's short and `set -eu`, every downloaded binary is verified against published SHA-256 checksums,
-> and nothing runs with `sudo` — installs live under `~/.render` and your tools' own config files.
+> it's short and `set -eu`, downloads are HTTPS-pinned (redirects included) and checked against
+> published SHA-256 checksums before anything executes, and nothing runs with `sudo` — installs live
+> under `~/.render` and your tools' own config files.
+>
+> Checksums prove the bytes are intact, not that the release is ours: the manifest ships alongside the
+> artifact it describes. Authenticity comes from the cosign signature and SLSA build provenance on
+> every release, which you can verify with `gh attestation verify` — the bootstrap can't, since that
+> would require `cosign`/`gh` on your machine. [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md)
+> spells out the whole picture, including where third-party code is involved.
 
 ## What it does
 
@@ -52,11 +59,13 @@ servers intact) and does **not** remove the CLI or skills.
 The bootstrap runs the same wizard everyone else gets; if you installed `render-setup` another way
 (Homebrew/WinGet/npm) it stays on disk and you can run it directly. Binaries are published to
 [GitHub Releases](https://github.com/render-lab/render-install-wizard/releases) with SHA-256
-checksums; `RENDER_SETUP_VERSION=vX.Y.Z` pins a version (default: latest).
+checksums, a cosign signature over the manifest, and SLSA build provenance per binary;
+`RENDER_SETUP_VERSION=vX.Y.Z` pins a version (default: latest).
 
 ## Documentation
 
 - [`docs/SPEC.md`](docs/SPEC.md) — problem, architecture, design decisions, and status
+- [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) — what the install guarantees, and what it doesn't
 - [`docs/RELEASE.md`](docs/RELEASE.md) — what's left to launch + release runbook + rollback
 - [`docs/FUTURE.md`](docs/FUTURE.md) — not-started / future work (incl. native Windows)
 

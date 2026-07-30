@@ -50,7 +50,17 @@ binary from GitHub, so both must be in place. Do these in order.
    ```
    `release.yml` runs a preflight (the workflow must run in `render-lab/render-install-wizard`,
    else a repo-scoped token can't publish) then GoReleaser, producing
-   `render-setup_<os>_<arch>` (darwin/linux × amd64/arm64) + `checksums.txt` as a **draft** release.
+   `render-setup_<os>_<arch>` (darwin/linux × amd64/arm64) + `checksums.txt` as a **draft** release,
+   plus a cosign signature over the manifest (`checksums.txt.sig`/`.pem`) and SLSA build
+   provenance for each binary.
+
+   > **Use a plain `vX.Y.Z` tag for anything users should get.** `prerelease: auto` marks any tag
+   > with a prerelease suffix (`v1.2.0-rc.1`) as a GitHub prerelease, and the `latest/download`
+   > redirect skips prereleases just as it skips drafts. That is deliberate — an rc must not become
+   > what a bare `curl | sh` installs — but it means an rc is reachable *only* by pinning
+   > `RENDER_SETUP_VERSION=v1.2.0-rc.1`, and a repo whose only releases are prereleases has no
+   > working bootstrap at all.
+
 3. **Publish** the draft — drafts are *not* served by the `latest/download` redirect:
    ```bash
    gh release edit vX.Y.Z --draft=false --repo render-lab/render-install-wizard
@@ -61,6 +71,16 @@ binary from GitHub, so both must be in place. Do these in order.
      https://github.com/render-lab/render-install-wizard/releases/latest/download/render-setup_darwin_arm64
    curl -fsSL -o /dev/null -w 'sums   %{http_code}\n' \
      https://github.com/render-lab/render-install-wizard/releases/latest/download/checksums.txt
+   ```
+   Then confirm the provenance and signature landed. These are what let a third party establish the
+   release came from this repo's workflow — something `checksums.txt` alone cannot show, since it
+   ships alongside the binaries it describes:
+   ```bash
+   gh attestation verify render-setup_darwin_arm64 --repo render-lab/render-install-wizard
+   cosign verify-blob checksums.txt \
+     --signature checksums.txt.sig --certificate checksums.txt.pem \
+     --certificate-identity-regexp '^https://github.com/render-lab/render-install-wizard/' \
+     --certificate-oidc-issuer https://token.actions.githubusercontent.com
    ```
 
 ### 2. Ship the script on render.com

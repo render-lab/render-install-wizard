@@ -36,6 +36,31 @@ main() {
 	base_url="${base_url%/}"
 	version="${RENDER_SETUP_VERSION:-latest}"
 
+	# ---- require a transport that can't be tampered with ----
+	# curl follows redirects across protocols by default, so an https request that
+	# is answered with a redirect to http proceeds in cleartext -- and the wizard
+	# binary then arrives over a channel anyone on the path can rewrite. Checksum
+	# verification below does not close this: the manifest is fetched over the same
+	# channel, so whoever can swap the binary can swap the digest with it.
+	# --proto pins the first request and --proto-redir pins every hop after it.
+	#
+	# A non-https base_url is refused outright rather than downgraded silently, so a
+	# mirror URL copied from somewhere untrustworthy fails loudly instead of
+	# installing whatever it is handed.
+	case "${base_url}" in
+	https://*)
+		proto_args="--proto =https --proto-redir =https"
+		;;
+	http://127.0.0.1[:/]* | http://localhost[:/]* | http://\[::1\][:/]*)
+		# Loopback only, for the e2e harness which serves a release snapshot from a
+		# local port. There is no network hop here to intercept.
+		proto_args=""
+		;;
+	*)
+		err "RENDER_INSTALL_BASE_URL must be an https URL (got ${base_url})"
+		;;
+	esac
+
 	# ---- OS detection ----
 	uname_s="$(uname -s 2>/dev/null || echo unknown)"
 	case "${uname_s}" in
@@ -92,6 +117,10 @@ main() {
 	info "Setting up Render for agents (${os}/${arch})"
 
 	# ---- pick a downloader: prefer curl, fall back to wget ----
+	# curl is preferred partly because it can pin the protocol across redirects.
+	# wget offers no equivalent for a single retrieval (--https-only governs
+	# recursive fetches only), so on the wget path the scheme of the initial URL is
+	# all that is enforced.
 	downloader=""
 	if command -v curl >/dev/null 2>&1; then
 		downloader="curl"
@@ -104,7 +133,8 @@ main() {
 	# fetch <url> <dest-file>
 	fetch() {
 		if [ "${downloader}" = "curl" ]; then
-			curl -fsSL "$1" -o "$2"
+			# shellcheck disable=SC2086 # proto_args must word-split into flags
+			curl -fsSL ${proto_args} "$1" -o "$2"
 		else
 			wget -q -O "$2" "$1"
 		fi
@@ -134,6 +164,18 @@ main() {
 	trap 'exit 143' TERM
 
 	if ! fetch "${binary_url}" "${tmp}/${artifact}"; then
+		# The "latest" alias resolves only to a published, non-prerelease release, so
+		# a release that is still a draft or is marked as a prerelease makes this URL
+		# 404 while the release is plainly visible on the repo's releases page. Say so,
+		# because the bare failure sends people looking for a network problem instead.
+		if [ "${version}" = "latest" ]; then
+			info "Note: 'latest' resolves only to a published, non-prerelease release."
+			info "If a release was just cut it may still be a draft or a prerelease, in which"
+			info "case it is not reachable this way. Pin its exact tag to bypass the alias:"
+			info ""
+			info "    RENDER_SETUP_VERSION=vX.Y.Z"
+			info ""
+		fi
 		err "failed to download wizard from ${binary_url}"
 	fi
 	if ! fetch "${checksums_url}" "${tmp}/${checksums_file}"; then

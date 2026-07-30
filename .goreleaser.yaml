@@ -39,11 +39,54 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# Sign the checksums manifest with cosign in keyless mode, using the ambient OIDC
+# token from GitHub Actions (so there is no private key to store or rotate).
+#
+# Only the manifest is signed, which covers every artifact: the manifest lists
+# their SHA-256 digests, so a valid signature over it plus a digest match is proof
+# for each binary, at one signature instead of five.
+#
+# This is for auditors, not for the bootstrap. Verifying a Sigstore signature needs
+# cosign on the machine, which a dependency-light `curl | sh` cannot assume, so
+# agents.sh still verifies digests only (see docs/SECURITY-MODEL.md). What signing
+# adds is the ability for anyone to confirm after the fact that a release really
+# came from this repo's workflow:
+#
+#   cosign verify-blob checksums.txt \
+#     --signature checksums.txt.sig --certificate checksums.txt.pem \
+#     --certificate-identity-regexp '^https://github.com/render-lab/render-install-wizard/' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
 release:
   github:
     owner: render-lab
     name: render-install-wizard
   # Cut releases as drafts so a human can review assets before publishing.
+  #
+  # Both settings below decide whether the bootstrap can reach a release at all.
+  # agents.sh downloads from `releases/latest/download/...`, and GitHub's "latest"
+  # alias resolves only to a published, non-prerelease release. So:
+  #
+  #   - draft: true means a freshly tagged release is invisible to the bootstrap
+  #     until a human publishes it. That gate is the point, but it does mean
+  #     tagging alone does not ship anything -- see the publish step in
+  #     docs/RELEASE.md.
+  #   - prerelease: auto marks any tag carrying a prerelease suffix (v1.2.0-rc.1)
+  #     as a GitHub prerelease, which "latest" also skips. That is intended: an rc
+  #     must not become what a bare `curl | sh` installs. It also means an rc is
+  #     only testable by pinning RENDER_SETUP_VERSION to its exact tag, and that a
+  #     repo whose only releases are prereleases has no working bootstrap.
   draft: true
   prerelease: auto
 

@@ -7,6 +7,12 @@ on:
 
 permissions:
   contents: write
+  # Sigstore keyless signing and build attestation both authenticate by exchanging
+  # a short-lived OIDC token for a certificate, which is what binds an artifact to
+  # this workflow in this repository. Neither works without this.
+  id-token: write
+  # Lets the provenance step record its attestation against the repository.
+  attestations: write
 
 jobs:
   goreleaser:
@@ -37,6 +43,11 @@ jobs:
           fi
           echo "Release coordinate OK: ${GITHUB_REPOSITORY}"
 
+      # Provides the cosign binary the `signs` block in .goreleaser.yaml shells out
+      # to. Keyless mode needs no key material: it uses this job's OIDC identity.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -45,3 +56,27 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Records signed SLSA provenance for each published binary: what built it,
+      # from which commit, on which workflow. This answers a question the checksums
+      # cannot -- they only prove a download matches the manifest that shipped
+      # beside it, which is no help if the release itself is not ours. Anyone can
+      # check a downloaded binary with:
+      #
+      #   gh attestation verify render-setup_darwin_arm64 \
+      #     --repo render-lab/render-install-wizard
+      #
+      # Runs after GoReleaser so the artifacts exist in dist/, and covers the
+      # binaries rather than checksums.txt, since the binaries are what users run.
+      #
+      # The glob reaches through a directory on purpose. With the `binary` archive
+      # format GoReleaser renames only the *uploaded asset*; on disk each binary
+      # stays at dist/render-setup_<os>_<arch>[_<variant>]/render-setup. So
+      # `dist/render-setup_*` would match those directories rather than any file,
+      # and this pattern matches the executables themselves. Attestations are keyed
+      # by digest, so verification still succeeds against an asset downloaded under
+      # its published name.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/render-setup_*/render-setup

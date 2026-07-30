@@ -8,6 +8,13 @@
 #
 # Usage: BIN=/path/to/render-setup test/e2e/opencode_jsonc_check.sh
 #        (BIN defaults to a freshly built ./render-setup)
+#
+# Assertions below read `<check> && pass ... || die ...`. ShellCheck flags that
+# shape (SC2015) because the third branch also runs when the second one fails --
+# which cannot happen here: pass is a lone printf and die ends in an assignment, so
+# both always report success. Disabled file-wide rather than at each of the call
+# sites, since the reasoning is the same for all of them.
+# shellcheck disable=SC2015
 set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

@@ -6,6 +6,7 @@
 package render
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,10 +35,21 @@ const SkillsRepo = "render-oss/skills"
 // presence of the containing directory.
 const SkillsDirPrefix = "render-"
 
-// SkillsCLISpec pins the third-party `skills` npm package to an exact version so
-// `npx` executes a known, immutable installer rather than resolving whatever is
-// latest at run time (a supply-chain hazard, since npx would run unverified code
-// on every install). Bump this deliberately when adopting a newer skills CLI.
+// SkillsCLISpec pins the third-party `skills` npm package (vercel-labs/skills) to
+// an exact version so `npx` executes a known, immutable installer rather than
+// resolving whatever is latest at run time. Bump this deliberately when adopting a
+// newer skills CLI.
+//
+// Be clear about the limits of this pin, because they differ from the guarantee
+// the wizard's own binaries carry. npm versions are immutable, so this resolves to
+// a fixed tarball whose integrity npm itself checks against the registry. It does
+// not amount to the checksum verification applied to the render-setup and Render
+// CLI downloads: there is no digest pinned here that a compromised registry would
+// have to match, and the CLI's own dependencies are declared as ranges, so the
+// tree beneath it is resolved fresh on every install and cannot be pinned from
+// here at all. Installing skills therefore executes third-party code that is
+// version-pinned but not independently verified. The invocation passes
+// --ignore-scripts to remove the most common vehicle for that risk.
 const SkillsCLISpec = "skills@1.5.19"
 
 // Render CLI install facts.
@@ -51,11 +63,52 @@ const (
 	// shell (it installs non-root binaries to ~/.local/bin, outside the
 	// wizard-owned tree); it is retained as a reference to the upstream source.
 	CLIInstallScriptURL = "https://raw.githubusercontent.com/render-oss/cli/refs/heads/main/bin/install.sh"
-	// CLILatestReleaseAPIURL returns metadata (including tag_name) for the most
-	// recent Render CLI release. It mirrors what the official install script
-	// queries to resolve "latest".
-	CLILatestReleaseAPIURL = "https://api.github.com/repos/render-oss/cli/releases/latest"
+	// CLILatestReleaseURL is the permanent alias for the most recent Render CLI
+	// release. Requested without following redirects it answers 302 with a
+	// Location of .../releases/tag/<tag>, which is how the wizard resolves
+	// "latest" (see CLILatestReleaseTagSegment).
+	//
+	// This is deliberately github.com rather than the api.github.com
+	// releases/latest endpoint the official install script uses. That endpoint is
+	// rate limited to 60 requests per hour per source IP for unauthenticated
+	// callers, counted across every consumer sharing the address — so behind a
+	// corporate NAT or on a CI runner the wizard could be denied by other
+	// traffic entirely and fail to resolve a version through no fault of its own.
+	// The redirect carries no such limit.
+	CLILatestReleaseURL = "https://github.com/render-oss/cli/releases/latest"
+	// CLILatestReleaseTagSegment is the path segment preceding the release tag in
+	// the Location that CLILatestReleaseURL redirects to.
+	CLILatestReleaseTagSegment = "/releases/tag/"
 )
+
+// versionAllowed matches the characters permitted in a release version. Release
+// tags are semver-shaped, so this covers every legitimate one while excluding the
+// slashes, dot segments, and escapes that would let a version steer the URLs and
+// filenames built from it somewhere unintended.
+func versionAllowed(r rune) bool {
+	return r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' ||
+		r == '.' || r == '-' || r == '_' || r == '+'
+}
+
+// ValidateVersion checks that version is safe to interpolate into the release
+// URLs and archive filenames built by this package.
+//
+// Both sources of a version are untrusted in the relevant sense: one is typed by
+// a user (--pin-version) and the other is read from an HTTP redirect. Either can
+// carry path separators or dot segments, which would silently retarget a download
+// at a different path on the release host, so both are checked here rather than at
+// only one call site.
+func ValidateVersion(version string) error {
+	if version == "" {
+		return errors.New("render: version is empty")
+	}
+	for _, r := range version {
+		if !versionAllowed(r) {
+			return fmt.Errorf("render: version %q contains disallowed character %q", version, r)
+		}
+	}
+	return nil
+}
 
 // cliReleaseTag normalizes a version to the "v"-prefixed release tag used in
 // GitHub release URLs (the archive filenames embed the version without the "v").

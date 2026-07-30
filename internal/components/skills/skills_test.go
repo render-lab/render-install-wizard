@@ -68,7 +68,7 @@ func TestInstallPrefersNpxNonInteractive(t *testing.T) {
 		t.Fatalf("name = %q, want npx", rec.name)
 	}
 	// Pinned package (-y skills@<ver>) + --all + -g: non-interactive, global.
-	want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--all", "-g", "--copy"}
+	want := []string{"--ignore-scripts", "-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--all", "-g", "--copy"}
 	if !argsEqual(rec.args, want) {
 		t.Fatalf("args = %v, want %v", rec.args, want)
 	}
@@ -76,6 +76,45 @@ func TestInstallPrefersNpxNonInteractive(t *testing.T) {
 	if render.SkillsCLISpec == "skills" || !strings.Contains(render.SkillsCLISpec, "@") {
 		t.Fatalf("SkillsCLISpec %q is not version-pinned", render.SkillsCLISpec)
 	}
+}
+
+// TestInstallSuppressesNPMLifecycleScripts guards the supply-chain posture of the
+// npx path: --ignore-scripts must be present, and must precede the package spec.
+// npm treats it as install configuration, so an occurrence after the spec would be
+// forwarded to the skills CLI as an unknown argument instead of suppressing
+// lifecycle scripts — the flag would look present while doing nothing.
+func TestInstallSuppressesNPMLifecycleScripts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		agents []ids.ToolID
+	}{
+		{"unscoped", nil},
+		{"scoped", []ids.ToolID{ids.ToolCursor}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recorder{}
+			c := &Component{home: t.TempDir(), lookPath: lookPathFunc("npx"), run: rec.run}
+			if err := c.Install(context.Background(), components.Options{Agents: tc.agents}); err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			flag, spec := indexOf(rec.args, "--ignore-scripts"), indexOf(rec.args, render.SkillsCLISpec)
+			if flag < 0 {
+				t.Fatalf("args %v omit --ignore-scripts", rec.args)
+			}
+			if flag > spec {
+				t.Fatalf("--ignore-scripts at %d must precede the package spec at %d: %v", flag, spec, rec.args)
+			}
+		})
+	}
+}
+
+func indexOf(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestInstallScopedTargetsOnlyNamedAgents guards F02: an explicit --agent scope
@@ -92,7 +131,7 @@ func TestInstallScopedTargetsOnlyNamedAgents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-g", "-y", "--copy"}
+		want := []string{"--ignore-scripts", "-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-g", "-y", "--copy"}
 		if rec.name != "npx" || !argsEqual(rec.args, want) {
 			t.Fatalf("got %s %v, want npx %v", rec.name, rec.args, want)
 		}
@@ -114,7 +153,7 @@ func TestInstallScopedTargetsOnlyNamedAgents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-a", "codex", "-g", "-y", "--copy"}
+		want := []string{"--ignore-scripts", "-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-a", "codex", "-g", "-y", "--copy"}
 		if !argsEqual(rec.args, want) {
 			t.Fatalf("args = %v, want %v", rec.args, want)
 		}

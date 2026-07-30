@@ -50,8 +50,12 @@ export async function GET(): Promise<Response> {
       "Cache-Control": CACHE_CONTROL,
       // Cloudflare honors CDN-Cache-Control independently of the browser header.
       "CDN-Cache-Control": CACHE_CONTROL,
-      // The body is deterministic for a given deploy; advertise its length.
-      "Content-Length": String(Buffer.byteLength(SCRIPT, "utf8")),
+      // No hand-set Content-Length. It would describe the uncompressed script,
+      // while Next.js and Cloudflare are free to gzip or brotli the response --
+      // and a Content-Length that disagrees with the bytes on the wire gets the
+      // transfer truncated or rejected outright. The runtime computes the correct
+      // value for whatever encoding it actually applies, which a literal here can
+      // only get wrong.
       // Defense-in-depth: never let a browser sniff this into HTML.
       "X-Content-Type-Options": "nosniff",
     },

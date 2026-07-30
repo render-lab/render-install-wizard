@@ -86,10 +86,13 @@ func makeCLIZip(t *testing.T, name string, content []byte) []byte {
 	return buf.Bytes()
 }
 
-// fakeCLIFetch returns a fetch func that serves canned release metadata for the
-// GitHub API URL, a SHA256SUMS document (with the correct digest) for the
-// checksums URL, and a zip archive for the download URL, appending each
-// requested URL to urls so tests can assert what was fetched.
+// fakeCLIFetch returns a fetch func that serves a SHA256SUMS document (with the
+// correct digest) for the checksums URL and a zip archive for the download URL,
+// appending each requested URL to urls so tests can assert what was fetched.
+//
+// A request to api.github.com fails the test. Version resolution moved off that
+// host precisely because its unauthenticated rate limit is shared per source IP,
+// so a fetch reaching it means the regression is back.
 func fakeCLIFetch(t *testing.T, tag, goos, goarch string, binContent []byte, urls *[]string) func(context.Context, string) ([]byte, error) {
 	t.Helper()
 	zipBytes := makeCLIZip(t, "cli_"+tag, binContent)
@@ -99,12 +102,37 @@ func fakeCLIFetch(t *testing.T, tag, goos, goarch string, binContent []byte, url
 		*urls = append(*urls, url)
 		switch {
 		case strings.Contains(url, "api.github.com"):
-			return []byte(`{"tag_name":"` + tag + `"}`), nil
+			t.Errorf("must not query the rate-limited GitHub API, got %q", url)
+			return nil, errors.New("api.github.com is off limits")
 		case strings.Contains(url, "SHA256SUMS"):
 			return []byte(sums), nil
 		default:
 			return zipBytes, nil
 		}
+	}
+}
+
+// fakeRenderCLI returns a runOutput func that behaves like the real Render CLI:
+// --help answers with the header Detect identifies the binary by, and --version
+// returns the supplied result. Splitting the two matters because Status has to
+// report an installed CLI whose --version fails, which is only reachable if the
+// identity probe still succeeds.
+func fakeRenderCLI(version string, versionErr error) func(context.Context, string, ...string) (string, error) {
+	return func(_ context.Context, _ string, args ...string) (string, error) {
+		for _, a := range args {
+			if a == "--help" {
+				return renderCLIHelpMarker + " v2.10.0\n\nInteract with resources on Render\n", nil
+			}
+		}
+		return version, versionErr
+	}
+}
+
+// fakeLatestRedirect returns a redirectTarget func that answers the releases/latest
+// URL with the Location GitHub really sends: an absolute .../releases/tag/<tag>.
+func fakeLatestRedirect(tag string) func(context.Context, string) (string, error) {
+	return func(context.Context, string) (string, error) {
+		return "https://github.com/" + render.CLIRepo + "/releases/tag/" + tag, nil
 	}
 }
 
@@ -185,13 +213,14 @@ func TestInstall(t *testing.T) {
 		var urls []string
 		content := []byte("#!/bin/sh\n")
 		c := &Component{
-			home:       home,
-			goos:       "linux",
-			goarch:     "amd64",
-			lookPath:   lookPathFound("brew"),
-			run:        func(context.Context, string, ...string) error { return errors.New("brew: formula unavailable") },
-			fetch:      fakeCLIFetch(t, "v1.0.0", "linux", "amd64", content, &urls),
-			ensurePath: func(string) error { return nil },
+			home:           home,
+			goos:           "linux",
+			goarch:         "amd64",
+			lookPath:       lookPathFound("brew"),
+			run:            func(context.Context, string, ...string) error { return errors.New("brew: formula unavailable") },
+			fetch:          fakeCLIFetch(t, "v1.0.0", "linux", "amd64", content, &urls),
+			redirectTarget: fakeLatestRedirect("v1.0.0"),
+			ensurePath:     func(string) error { return nil },
 		}
 		if err := c.Install(ctx, components.Options{}); err != nil {
 			t.Fatalf("Install should fall back to download when brew fails: %v", err)
@@ -204,13 +233,14 @@ func TestInstall(t *testing.T) {
 
 	t.Run("brew and download both fail returns aggregate error", func(t *testing.T) {
 		c := &Component{
-			home:       t.TempDir(),
-			goos:       "linux",
-			goarch:     "amd64",
-			lookPath:   lookPathFound("brew"),
-			run:        func(context.Context, string, ...string) error { return errors.New("brew boom") },
-			fetch:      func(context.Context, string) ([]byte, error) { return nil, errors.New("network down") },
-			ensurePath: func(string) error { return nil },
+			home:           t.TempDir(),
+			goos:           "linux",
+			goarch:         "amd64",
+			lookPath:       lookPathFound("brew"),
+			run:            func(context.Context, string, ...string) error { return errors.New("brew boom") },
+			fetch:          func(context.Context, string) ([]byte, error) { return nil, errors.New("network down") },
+			redirectTarget: fakeLatestRedirect("v1.0.0"),
+			ensurePath:     func(string) error { return nil },
 		}
 		// Unpinned on purpose: a pinned version bypasses brew entirely, so the
 		// brew-then-download aggregate path only exists for an unpinned install.
@@ -231,12 +261,13 @@ func TestInstall(t *testing.T) {
 		var pathDir string
 		content := []byte("#!/bin/sh\necho render\n")
 		c := &Component{
-			home:       home,
-			goos:       "linux",
-			goarch:     "amd64",
-			lookPath:   lookPathNone(),
-			fetch:      fakeCLIFetch(t, "v9.9.9", "linux", "amd64", content, &urls),
-			ensurePath: func(binDir string) error { pathDir = binDir; return nil },
+			home:           home,
+			goos:           "linux",
+			goarch:         "amd64",
+			lookPath:       lookPathNone(),
+			fetch:          fakeCLIFetch(t, "v9.9.9", "linux", "amd64", content, &urls),
+			redirectTarget: fakeLatestRedirect("v9.9.9"),
+			ensurePath:     func(binDir string) error { pathDir = binDir; return nil },
 		}
 		if err := c.Install(ctx, components.Options{}); err != nil {
 			t.Fatalf("Install: %v", err)
@@ -264,36 +295,40 @@ func TestInstall(t *testing.T) {
 			t.Fatalf("ensurePath got %q, want %q", pathDir, want)
 		}
 
-		// Resolved latest via the API, fetched the linux/amd64 archive, and
-		// verified it against the release's immutable-versioned checksums.
-		if len(urls) != 3 || !strings.Contains(urls[0], "api.github.com") {
-			t.Fatalf("expected API, archive, checksums fetches, got %v", urls)
+		// Version came from the redirect, so the only fetches are the linux/amd64
+		// archive and the checksums it is verified against.
+		if len(urls) != 2 {
+			t.Fatalf("expected archive + checksums fetches, got %v", urls)
 		}
-		if !strings.Contains(urls[1], "download/v9.9.9/cli_9.9.9_linux_amd64.zip") {
-			t.Fatalf("archive URL = %q, want versioned cli_9.9.9_linux_amd64.zip", urls[1])
+		if !strings.Contains(urls[0], "download/v9.9.9/cli_9.9.9_linux_amd64.zip") {
+			t.Fatalf("archive URL = %q, want versioned cli_9.9.9_linux_amd64.zip", urls[0])
 		}
-		if !strings.Contains(urls[2], "download/v9.9.9/cli_9.9.9_SHA256SUMS") {
-			t.Fatalf("checksums URL = %q, want versioned SHA256SUMS", urls[2])
+		if !strings.Contains(urls[1], "download/v9.9.9/cli_9.9.9_SHA256SUMS") {
+			t.Fatalf("checksums URL = %q, want versioned SHA256SUMS", urls[1])
 		}
 	})
 
-	t.Run("pinned version skips API lookup", func(t *testing.T) {
+	t.Run("pinned version skips version resolution", func(t *testing.T) {
 		home := t.TempDir()
 		var urls []string
 		c := &Component{
-			home:       home,
-			goos:       "darwin",
-			goarch:     "arm64",
-			lookPath:   lookPathNone(),
-			fetch:      fakeCLIFetch(t, "v1.2.3", "darwin", "arm64", []byte("bin"), &urls),
+			home:     home,
+			goos:     "darwin",
+			goarch:   "arm64",
+			lookPath: lookPathNone(),
+			fetch:    fakeCLIFetch(t, "v1.2.3", "darwin", "arm64", []byte("bin"), &urls),
+			redirectTarget: func(context.Context, string) (string, error) {
+				t.Error("a pinned version must not resolve latest")
+				return "", errors.New("unexpected redirect lookup")
+			},
 			ensurePath: func(string) error { return nil },
 		}
 		if err := c.Install(ctx, components.Options{Version: "1.2.3"}); err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		// Archive then checksums, no API call.
+		// Archive then checksums, no version lookup.
 		if len(urls) != 2 {
-			t.Fatalf("expected archive + checksums fetch (no API), got %v", urls)
+			t.Fatalf("expected archive + checksums fetch only, got %v", urls)
 		}
 		if !strings.Contains(urls[0], "download/v1.2.3/cli_1.2.3_darwin_arm64.zip") {
 			t.Fatalf("archive URL = %q", urls[0])
@@ -438,11 +473,9 @@ func TestStatus(t *testing.T) {
 
 	t.Run("installed with version", func(t *testing.T) {
 		c := &Component{
-			home:     t.TempDir(),
-			lookPath: lookPathFound(render.CLIBinaryName),
-			runOutput: func(_ context.Context, _ string, _ ...string) (string, error) {
-				return "render 2.10.0\n", nil
-			},
+			home:      t.TempDir(),
+			lookPath:  lookPathFound(render.CLIBinaryName),
+			runOutput: fakeRenderCLI("render 2.10.0\n", nil),
 		}
 		st, err := c.Status(ctx)
 		if err != nil {
@@ -458,11 +491,9 @@ func TestStatus(t *testing.T) {
 
 	t.Run("installed but version fails", func(t *testing.T) {
 		c := &Component{
-			home:     t.TempDir(),
-			lookPath: lookPathFound(render.CLIBinaryName),
-			runOutput: func(_ context.Context, _ string, _ ...string) (string, error) {
-				return "", errors.New("boom")
-			},
+			home:      t.TempDir(),
+			lookPath:  lookPathFound(render.CLIBinaryName),
+			runOutput: fakeRenderCLI("", errors.New("boom")),
 		}
 		st, err := c.Status(ctx)
 		if err != nil {

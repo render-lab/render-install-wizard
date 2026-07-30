@@ -59,11 +59,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: shellcheck (only if scripts exist)
+      - name: shellcheck
         run: |
-          if ls scripts/*.sh >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y shellcheck
-            shellcheck scripts/*.sh
-          else
-            echo "no shell scripts yet; skipping"
+          # Every tracked shell script, not just scripts/*.sh. The previous glob left
+          # the majority of the repo's shell unchecked: test/e2e/*.sh is what proves
+          # the bootstrap works, and deploy/render-com/agents.sh is the copy
+          # render.com actually serves, so a quoting bug in either matters as much as
+          # one in scripts/.
+          # Fail rather than skip when nothing matches. The old version printed
+          # "skipping" and exited green, so a path change could have quietly turned
+          # this gate into a no-op that still reported success.
+          if [ "$(git ls-files '*.sh' | wc -l)" -eq 0 ]; then
+            echo "::error::no shell scripts found -- the shellcheck gate is covering nothing"
+            exit 1
           fi
+          git ls-files '*.sh'
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          # -z/-0 pairs the listing with xargs safely, and avoids needing bash 4's
+          # mapfile so the same command can be run by hand on any shell.
+          git ls-files -z '*.sh' | xargs -0 shellcheck

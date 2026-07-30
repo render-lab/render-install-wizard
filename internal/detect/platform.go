@@ -17,7 +17,9 @@ type Platform struct {
 	Arch string
 	// IsWSL reports whether the host is running under Windows Subsystem for Linux.
 	IsWSL bool
-	// HasTTY reports whether an interactive terminal is attached.
+	// HasTTY reports whether an interactive terminal is attached, meaning the
+	// wizard may take over the screen with a TUI. See DetectPlatform for why both
+	// stdin and stdout must be terminals for this to be true.
 	HasTTY bool
 }
 
@@ -27,13 +29,32 @@ var wslProcFiles = []string{"/proc/version", "/proc/sys/kernel/osrelease"}
 
 // DetectPlatform returns the current host platform, including WSL and TTY
 // detection.
+//
+// HasTTY requires stdin *and* stdout to be terminals. Stdin alone is not enough:
+// it only establishes that the wizard can read keystrokes, while a TUI also has to
+// draw. With stdout redirected — `render-setup > install.log`, a pipe into another
+// program, or a CI job capturing output — cursor moves and redraws would be
+// written into the file or pipe as escape sequences, leaving the user watching an
+// apparently hung program whose prompts they cannot see, while the captured output
+// is corrupted. Requiring both means those cases fall through to the
+// non-interactive default instead.
 func DetectPlatform() Platform {
 	return Platform{
 		OS:     runtime.GOOS,
 		Arch:   runtime.GOARCH,
 		IsWSL:  detectWSL(runtime.GOOS, readWSLProcFiles),
-		HasTTY: term.IsTerminal(int(os.Stdin.Fd())),
+		HasTTY: hasTTY(isTerminal),
 	}
+}
+
+// isTerminal reports whether fd refers to a terminal.
+func isTerminal(fd uintptr) bool { return term.IsTerminal(int(fd)) }
+
+// hasTTY reports whether both of this process's interactive streams are
+// terminals, using the injected predicate so the stdin/stdout combinations are
+// testable without a real terminal on either descriptor.
+func hasTTY(isTerm func(uintptr) bool) bool {
+	return isTerm(os.Stdin.Fd()) && isTerm(os.Stdout.Fd())
 }
 
 // readWSLProcFiles reads the procfs files used for WSL detection, concatenating
