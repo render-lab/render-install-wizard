@@ -26,7 +26,7 @@ func TestEnsurePATHEntryIdempotent(t *testing.T) {
 		{
 			name:     "fish",
 			shell:    "fish",
-			wantLine: "fish_add_path /home/u/.render/bin",
+			wantLine: "fish_add_path '/home/u/.render/bin'",
 		},
 	}
 
@@ -124,7 +124,7 @@ func TestShellRCFile(t *testing.T) {
 		wantErr bool
 	}{
 		{shell: "zsh", want: filepath.Join(home, ".zshrc")},
-		{shell: "bash", want: filepath.Join(home, ".bashrc")},
+		{shell: "bash", want: bashRCForHost(home)},
 		{shell: "fish", want: filepath.Join(home, ".config", "fish", "config.fish")},
 		{shell: "tcsh", wantErr: true},
 		{shell: "", wantErr: true},
