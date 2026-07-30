@@ -212,7 +212,9 @@ func TestInstall(t *testing.T) {
 			fetch:      func(context.Context, string) ([]byte, error) { return nil, errors.New("network down") },
 			ensurePath: func(string) error { return nil },
 		}
-		err := c.Install(ctx, components.Options{Version: "1.0.0"})
+		// Unpinned on purpose: a pinned version bypasses brew entirely, so the
+		// brew-then-download aggregate path only exists for an unpinned install.
+		err := c.Install(ctx, components.Options{})
 		if err == nil {
 			t.Fatal("expected an aggregate error when both brew and download fail")
 		}
@@ -295,6 +297,65 @@ func TestInstall(t *testing.T) {
 		}
 		if !strings.Contains(urls[0], "download/v1.2.3/cli_1.2.3_darwin_arm64.zip") {
 			t.Fatalf("archive URL = %q", urls[0])
+		}
+	})
+
+	// Regression guard: Homebrew used to be preferred before opts.Version was
+	// consulted, so `--pin-version` was silently swallowed on any machine with
+	// brew installed -- the wizard ran a bare `brew install render` and reported
+	// success while installing an entirely different version.
+	t.Run("pinned version bypasses brew", func(t *testing.T) {
+		home := t.TempDir()
+		var urls []string
+		var ran []string
+		c := &Component{
+			home:     home,
+			goos:     "darwin",
+			goarch:   "arm64",
+			lookPath: func(name string) (string, error) { return "/opt/homebrew/bin/" + name, nil },
+			run: func(_ context.Context, name string, args ...string) error {
+				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+				return nil
+			},
+			fetch:      fakeCLIFetch(t, "v1.2.3", "darwin", "arm64", []byte("bin"), &urls),
+			ensurePath: func(string) error { return nil },
+		}
+		if err := c.Install(ctx, components.Options{Version: "1.2.3"}); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		if len(ran) != 0 {
+			t.Errorf("brew must not be used when a version is pinned, but ran: %v", ran)
+		}
+		if len(urls) == 0 || !strings.Contains(urls[0], "download/v1.2.3/") {
+			t.Errorf("expected the pinned release to be downloaded, got %v", urls)
+		}
+	})
+
+	// The brew preference must survive for the unpinned case, which is the
+	// common path.
+	t.Run("unpinned install still prefers brew", func(t *testing.T) {
+		var ran []string
+		c := &Component{
+			home:     t.TempDir(),
+			goos:     "darwin",
+			goarch:   "arm64",
+			lookPath: func(name string) (string, error) { return "/opt/homebrew/bin/" + name, nil },
+			run: func(_ context.Context, name string, args ...string) error {
+				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+				return nil
+			},
+			fetch: func(context.Context, string) ([]byte, error) {
+				t.Error("network must not be touched when brew succeeds")
+				return nil, errors.New("unexpected fetch")
+			},
+			ensurePath: func(string) error { return nil },
+		}
+		if err := c.Install(ctx, components.Options{}); err != nil {
+			t.Fatalf("Install: %v", err)
+		}
+		want := "brew install " + render.CLIBinaryName
+		if len(ran) != 1 || ran[0] != want {
+			t.Errorf("ran = %v, want [%q]", ran, want)
 		}
 	})
 

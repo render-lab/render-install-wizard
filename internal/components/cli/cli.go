@@ -150,11 +150,17 @@ func (c *Component) Status(ctx context.Context) (components.Status, error) {
 // or partial local state), the direct release download is tried as a fallback
 // rather than failing outright (F36); an aggregate error is returned only when
 // both paths fail.
+//
+// An explicit opts.Version bypasses Homebrew entirely. `brew install render`
+// installs whatever the formula currently points at and the formula has no
+// versioned variants to pin to, so honoring a pin through brew is impossible —
+// taking the release path is the only way a requested version is the version
+// actually installed.
 func (c *Component) Install(ctx context.Context, opts components.Options) error {
 	if opts.DryRun {
 		return nil
 	}
-	if c.lookPath != nil {
+	if c.lookPath != nil && opts.Version == "" {
 		if _, err := c.lookPath("brew"); err == nil {
 			bctx, cancel := context.WithTimeout(ctx, brewTimeout)
 			brewErr := c.run(bctx, "brew", "install", render.CLIBinaryName)
