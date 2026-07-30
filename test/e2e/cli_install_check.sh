@@ -32,6 +32,8 @@ HOME_DIR="$(mktemp -d)"
 export HOME="$HOME_DIR"
 export RENDER_HOME="$HOME_DIR/.render"
 export SHELL=/bin/bash # PATH persistence should target ~/.bashrc
+# Neutralize ambient config-home overrides for a fully hermetic run.
+unset XDG_CONFIG_HOME CLAUDE_CONFIG_DIR CODEX_HOME OPENCODE_CONFIG
 
 echo "== install the Render CLI (direct download into wizard-owned dir) =="
 if ! "$BIN" --components cli --no-login >/dev/null 2>&1; then

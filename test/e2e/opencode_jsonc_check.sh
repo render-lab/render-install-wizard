@@ -37,6 +37,9 @@ fi
 HOME_DIR="$(mktemp -d)"
 export HOME="$HOME_DIR"
 export RENDER_HOME="$HOME_DIR/.render"
+# Neutralize ambient config-home overrides so OpenCode resolves inside this
+# hermetic HOME (CI runners can set XDG_CONFIG_HOME, which OpenCode honors).
+unset XDG_CONFIG_HOME CLAUDE_CONFIG_DIR CODEX_HOME OPENCODE_CONFIG
 
 DIR="$HOME_DIR/.config/opencode"
 JSONC="$DIR/opencode.jsonc"

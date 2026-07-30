@@ -55,6 +55,10 @@ sha() {
 HOME_DIR="$(mktemp -d)"
 export HOME="$HOME_DIR"
 export RENDER_HOME="$HOME_DIR/.render"
+# Neutralize ambient config-home overrides so each tool's config resolves inside
+# this hermetic HOME. CI runners can set XDG_CONFIG_HOME (which OpenCode's path
+# resolution honors), which would send the render entry outside HOME_DIR.
+unset XDG_CONFIG_HOME CLAUDE_CONFIG_DIR CODEX_HOME OPENCODE_CONFIG
 
 CURSOR="$HOME_DIR/.cursor/mcp.json"
 CLAUDE="$HOME_DIR/.claude.json"
