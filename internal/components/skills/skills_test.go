@@ -68,7 +68,7 @@ func TestInstallPrefersNpxNonInteractive(t *testing.T) {
 		t.Fatalf("name = %q, want npx", rec.name)
 	}
 	// Pinned package (-y skills@<ver>) + --all + -g: non-interactive, global.
-	want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--all", "-g"}
+	want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--all", "-g", "--copy"}
 	if !argsEqual(rec.args, want) {
 		t.Fatalf("args = %v, want %v", rec.args, want)
 	}
@@ -92,7 +92,7 @@ func TestInstallScopedTargetsOnlyNamedAgents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-g", "-y"}
+		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-g", "-y", "--copy"}
 		if rec.name != "npx" || !argsEqual(rec.args, want) {
 			t.Fatalf("got %s %v, want npx %v", rec.name, rec.args, want)
 		}
@@ -114,7 +114,7 @@ func TestInstallScopedTargetsOnlyNamedAgents(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Install: %v", err)
 		}
-		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-a", "codex", "-g", "-y"}
+		want := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo, "--skill", "*", "-a", "cursor", "-a", "codex", "-g", "-y", "--copy"}
 		if !argsEqual(rec.args, want) {
 			t.Fatalf("args = %v, want %v", rec.args, want)
 		}

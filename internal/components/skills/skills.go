@@ -203,10 +203,16 @@ func (c *Component) renderCLIPath() (string, bool) {
 // yields an explicit, non-interactive per-agent scope. Agent IDs match the
 // skills CLI's --agent values (claude-code, cursor, codex, opencode) exactly, so
 // no name translation is needed.
+//
+// --copy is always passed. By default the installer symlinks each skill from the
+// universal directory into the per-agent directories, which makes Uninstall's
+// removal of that universal directory leave a dangling symlink behind in every
+// agent. Copying keeps each agent's directory self-contained, so removing one
+// location never breaks another.
 func skillsAddArgs(agents []ids.ToolID) []string {
 	args := []string{"-y", render.SkillsCLISpec, "add", render.SkillsRepo}
 	if len(agents) == 0 {
-		return append(args, "--all", "-g")
+		return append(args, "--all", "-g", "--copy")
 	}
 	args = append(args, "--skill", "*")
 	for _, a := range agents {
@@ -215,7 +221,7 @@ func skillsAddArgs(agents []ids.ToolID) []string {
 	// -g installs to the user (global) skills dir; -y skips the skills CLI's own
 	// prompts (implied by --all in the unscoped path, but required once we drop
 	// --all here).
-	return append(args, "-g", "-y")
+	return append(args, "-g", "-y", "--copy")
 }
 
 // agentNames renders a set of agent IDs as a comma-separated string for errors.
