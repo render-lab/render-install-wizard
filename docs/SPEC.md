@@ -58,9 +58,11 @@ remaining phase** and is mostly out-of-repo coordination — see [`RELEASE.md`](
 
 ### Thin bootstrap → standalone wizard
 
-The shell script only: detects OS/arch → downloads the wizard binary (checksum-verified) → installs
-it to `~/.render/bin` → updates PATH (zsh/bash/fish) → `exec`s the wizard, forwarding flags. All
-logic is wrapped in a `main()` invoked on the last line, so a truncated download executes nothing.
+The shell script only: detects OS/arch → downloads the wizard binary (checksum-verified) into a
+scratch dir → runs it (forwarding flags) → deletes it. It's ephemeral: it installs nothing of its
+own and leaves no wizard binary or PATH edit behind — the wizard itself installs the Render CLI to
+`~/.render/bin` and updates PATH (zsh/bash/fish). All logic is wrapped in a `main()` invoked on the
+last line, so a truncated download executes nothing.
 
 Everything interactive lives in the standalone Go wizard binary (`render-setup`), shipped and
 versioned independently of the CLI:
@@ -182,6 +184,12 @@ The wizard writes config via the shell-automatable **config-file path** for ever
 - **Uninstall (`-r`) is scoped to MCP config removal.** Removes the Render MCP entry from each target
   tool (merge-not-clobber delete) and intentionally does NOT remove the CLI or skills — a half-working
   uninstall misleads. Help text and summary say so.
+- **Ephemeral bootstrap.** `agents.sh` downloads the wizard to a scratch dir under `$HOME`, runs it,
+  and deletes it (via an EXIT/INT/TERM trap) — it installs nothing of its own and makes no PATH edit,
+  so the bootstrap has no footprint to clean up. Only what the wizard sets up persists (the CLI under
+  `~/.render/bin`, skills, per-tool MCP config); the wizard owns the CLI's PATH entry. Re-running is
+  always a fresh download. (Package-manager channels — Homebrew/WinGet/npm — still install
+  `render-setup` persistently; only the curl path is ephemeral.)
 - **Binaries on GitHub Releases, version-less names.** `render-setup_<os>_<arch>` (raw binaries) so
   `latest` resolves via GitHub's `/releases/latest/download/` redirect and pinned versions via the
   tag. Scheme centralized in `internal/paths` and mirrored by `agents.sh`. `render.com/agents.sh`
@@ -191,7 +199,8 @@ The wizard writes config via the shell-automatable **config-file path** for ever
 
 - `set -eu`, `main()`-wrapper (no partial execution on truncated downloads).
 - Checksum-verify every downloaded binary; checksums served separately from artifacts.
-- No `sudo` — installs under `~/.render/bin` and the tools' own config files only.
+- No `sudo` — the wizard installs the Render CLI under `~/.render/bin` and edits the tools' own
+  config files only; the curl bootstrap runs the wizard ephemerally (nothing of its own persists).
 - Read prompts from `/dev/tty` only when openable; full non-interactive fallback otherwise (CI/agents).
 - Idempotent and re-runnable; merges never overwrite other MCP servers/skills.
 - Scoped uninstall (`-r`) shipped from day one.

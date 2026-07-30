@@ -3,12 +3,12 @@
 #
 # Runs the served agents.sh (render.com, a Render preview URL, or any host)
 # inside disposable containers across base images and CPU arches, asserting that
-# the bootstrap downloads + checksum-verifies + installs the wizard and can exec
-# it — in a clean room, so nothing touches your host machine.
+# the bootstrap downloads + checksum-verifies + executes the wizard and then
+# removes it (ephemeral) — in a clean room, so nothing touches your host machine.
 #
 # It forwards `--dry-run --json` to the wizard by default: that still exercises
-# the full download -> verify -> install -> exec path (the binary is installed
-# and run), but makes no agent-config changes and avoids the "MCP needs a
+# the full download -> verify -> exec path (the binary is downloaded and run,
+# then deleted), but makes no agent-config changes and avoids the "MCP needs a
 # detected tool" failure in a bare container. Override WIZARD_ARGS for a deeper
 # run (e.g. seed an agent marker and pass `-y`).
 #
@@ -59,14 +59,15 @@ for plat in $PLATFORMS; do
 		label="${plat} ${name} (${image})"
 		printf '\n=== %s ===\n' "$label"
 
-		# Clean-room run: fetch+exec the served bootstrap, then confirm the wizard
-		# was actually installed and is runnable. ${HOME} is escaped so it expands
-		# inside the container (HOME=/root), not on the host.
+		# Clean-room run: fetch+exec the served bootstrap (set -e makes a nonzero
+		# bootstrap fail the case), then confirm it was ephemeral — no render-setup
+		# left behind. ${HOME} is escaped so it expands inside the container
+		# (HOME=/root), not on the host.
 		container_script="set -e
 ${prep}
 curl -fsSL '${URL}' | sh -s -- ${WIZARD_ARGS}
-\"\${HOME}/.render/bin/render-setup\" --version >/dev/null
-echo '[ok] wizard installed and runnable'"
+if [ -e \"\${HOME}/.render/bin/render-setup\" ]; then echo 'FAIL: render-setup persisted (should be ephemeral)' >&2; exit 1; fi
+echo '[ok] bootstrap ran and left no wizard binary behind (ephemeral)'"
 
 		if docker run --rm --platform "$plat" "$image" sh -c "$container_script"; then
 			results="${results}PASS  ${label}\n"

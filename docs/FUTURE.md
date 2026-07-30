@@ -17,14 +17,14 @@ Good news: the wizard binary already cross-compiles clean for `windows/amd64` an
 
 - [ ] **PowerShell bootstrap** — `scripts/agents.ps1` (parallel to `agents.sh`) + a served route
       (`render.com/agents.ps1`) + a vendored copy in `deploy/render-com/`. Detect arch → download
-      `render-setup_windows_<arch>.exe` → verify SHA-256 → install to `%USERPROFILE%\.render\bin` →
-      update user PATH → exec. Mirror the `agents.sh` guarantees; add a sync check. *(Medium — the
-      main new artifact.)*
+      `render-setup_windows_<arch>.exe` to a scratch dir → verify SHA-256 → run it → delete it
+      (ephemeral, like `agents.sh`). Mirror the `agents.sh` guarantees; add a sync check. *(Medium —
+      the main new artifact.)*
 - [ ] **Release matrix** — add `windows` (amd64 + arm64) to `.goreleaser.yaml` goos; `ArtifactName`
       already appends `.exe`. *(Trivial.)*
 - [ ] **Windows PATH updater** — `internal/paths/shellpath.go` only handles zsh/bash/fish; Windows
-      needs user PATH via `setx`/registry or the PowerShell `$PROFILE` (or let the PS bootstrap own
-      it, as `agents.sh` does today). *(Small.)*
+      needs user PATH via `setx`/registry or the PowerShell `$PROFILE`. The wizard owns PATH (the
+      bootstrap no longer touches it), so this belongs in the wizard's CLI installer. *(Small.)*
 - [ ] **Per-tool config paths + detection** — `internal/render.MCPConfigPath` and `internal/detect`
       assume `~/`-relative unix locations. Verify each tool's Windows location (Claude/Cursor/Codex
       likely home-relative → `%USERPROFILE%`; OpenCode may use `%APPDATA%`) and branch by `GOOS`.
@@ -42,6 +42,11 @@ per-tool config paths/detection for `GOOS == "windows"`; (3) write `agents.ps1` 
 
 ## Optional enhancements
 
+- **Thinner bootstrap that defers to the Render CLI** — once the Render CLI grows first-class
+  `render mcp install` / `render skills install` (+ matching uninstall) subcommands, `agents.sh` could
+  shrink to "install the CLI, then call those subcommands," dropping most of the standalone Go wizard.
+  The bootstrap already runs the wizard ephemerally, so this is a natural evolution; it trades the
+  bubbletea TUI for CLI-driven UX. Revisit when those CLI subcommands land.
 - **Cross-repo `agents.sh` sync (F19)** — CI keeps `scripts/agents.sh` == `deploy/render-com/agents.sh`
   within this repo, but nothing enforces that the website's vendored copy
   (`renderinc/website:app/agents.sh/agents.sh`) stays in sync with this repo's source. Today it's a

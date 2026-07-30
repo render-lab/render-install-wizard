@@ -9,9 +9,10 @@ curl -fsSL render.com/agents.sh | sh
 ```
 
 The `curl` target is a thin, auditable bootstrap that downloads a checksum-verified wizard binary
-(`render-setup`) into `~/.render/bin`, updates your `PATH`, and runs it. The wizard detects your
-installed agents, writes the Render MCP server into each one (merge-not-clobber), installs the
-official skills, and can install the Render CLI — idempotently, and non-interactively for agents/CI.
+(`render-setup`) into a scratch dir, runs it, then deletes it — the bootstrap is ephemeral and
+leaves no wizard binary or `PATH` edit behind. The wizard detects your installed agents, writes the
+Render MCP server into each one (merge-not-clobber), installs the official skills, and can install
+the Render CLI — idempotently, and non-interactively for agents/CI.
 
 > **Read it before you pipe it.** The bootstrap lives in [`scripts/agents.sh`](scripts/agents.sh),
 > it's short and `set -eu`, every downloaded binary is verified against published SHA-256 checksums,
@@ -48,8 +49,8 @@ servers intact) and does **not** remove the CLI or skills.
 
 ## Install channels
 
-The bootstrap installs the same wizard everyone else gets; you can also run `render-setup` directly
-if you installed it another way. Binaries are published to
+The bootstrap runs the same wizard everyone else gets; if you installed `render-setup` another way
+(Homebrew/WinGet/npm) it stays on disk and you can run it directly. Binaries are published to
 [GitHub Releases](https://github.com/render-lab/render-install-wizard/releases) with SHA-256
 checksums; `RENDER_SETUP_VERSION=vX.Y.Z` pins a version (default: latest).
 

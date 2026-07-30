@@ -6,8 +6,11 @@
 #   curl -fsSL render.com/agents.sh | sh -s -- -y --json
 #
 # What it does: detect OS/arch -> download the checksum-verified `render-setup`
-# wizard binary -> install it to ~/.render/bin -> update PATH -> exec the wizard,
-# forwarding any args. No sudo; everything lives under $RENDER_HOME.
+# wizard binary into a scratch dir -> run it (forwarding any args) -> delete it.
+# The bootstrap is ephemeral: it installs nothing of its own and leaves no
+# render-setup binary or PATH edit behind. Only what the wizard sets up (the
+# Render CLI, agent skills, MCP config) persists; the wizard manages the CLI's
+# PATH itself. No sudo.
 #
 # Read it before you pipe it. The source of truth for this script lives at
 # scripts/agents.sh in github.com/render-lab/render-install-wizard. The copy
@@ -26,56 +29,12 @@ main() {
 		exit 1
 	}
 
-	# update_path <bin-dir>: add <bin-dir> to PATH in the user's shell rc,
-	# exactly once, inside a marked block. Shell is chosen from $SHELL.
-	update_path() {
-		up_bin_dir="$1"
-		up_shell="${SHELL:-}"
-		up_shell="${up_shell##*/}"
-
-		case "${up_shell}" in
-		fish)
-			up_rc="${HOME}/.config/fish/config.fish"
-			up_style="fish"
-			;;
-		zsh)
-			up_rc="${HOME}/.zshrc"
-			up_style="posix"
-			;;
-		bash)
-			up_rc="${HOME}/.bashrc"
-			up_style="posix"
-			;;
-		*)
-			up_rc="${HOME}/.profile"
-			up_style="posix"
-			;;
-		esac
-
-		if [ -f "${up_rc}" ] && grep -qF '# >>> render >>>' "${up_rc}"; then
-			ok "Shell PATH - ${up_rc} already configured"
-			return 0
-		fi
-
-		mkdir -p "$(dirname "${up_rc}")"
-		if [ "${up_style}" = "fish" ]; then
-			printf '\n# >>> render >>>\nfish_add_path "%s"\n# <<< render <<<\n' "${up_bin_dir}" >>"${up_rc}"
-		else
-			# $PATH is written literally into the rc file so it expands at shell
-			# startup, not now; the single-quoted format string is intentional.
-			# shellcheck disable=SC2016
-			printf '\n# >>> render >>>\nexport PATH="%s:$PATH"\n# <<< render <<<\n' "${up_bin_dir}" >>"${up_rc}"
-		fi
-		ok "Shell PATH - ${up_rc} updated (restart your shell or 'source' it)"
-	}
-
 	# ---- configuration (env with defaults) ----
 	# Binaries are published to GitHub Releases; RENDER_INSTALL_BASE_URL points at
 	# the releases base and can be overridden (e.g. for a mirror or a local test).
 	base_url="${RENDER_INSTALL_BASE_URL:-https://github.com/render-lab/render-install-wizard/releases}"
 	base_url="${base_url%/}"
 	version="${RENDER_SETUP_VERSION:-latest}"
-	render_home="${RENDER_HOME:-${HOME}/.render}"
 
 	# ---- OS detection ----
 	uname_s="$(uname -s 2>/dev/null || echo unknown)"
@@ -165,9 +124,14 @@ main() {
 	binary_url="${download_dir}/${artifact}"
 	checksums_url="${download_dir}/${checksums_file}"
 
-	# ---- download into a scratch dir; clean it up on exit ----
-	tmp="$(mktemp -d 2>/dev/null || mktemp -d -t render-setup)"
+	# ---- download into a scratch dir; remove it (and the binary) on exit ----
+	# Place the scratch under $HOME rather than /tmp: /tmp is sometimes mounted
+	# noexec, which would block running the wizard from it. Cleaned up on exit
+	# (including Ctrl-C / TERM) so the bootstrap leaves no render-setup behind.
+	tmp="$(mktemp -d "${HOME:-.}/.render-setup.XXXXXX" 2>/dev/null || mktemp -d)"
 	trap 'rm -rf "${tmp}"' EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
 
 	if ! fetch "${binary_url}" "${tmp}/${artifact}"; then
 		err "failed to download wizard from ${binary_url}"
@@ -198,33 +162,28 @@ main() {
 	fi
 	ok "Verified sha256 checksum"
 
-	# ---- install to $RENDER_HOME/bin/render-setup ----
-	bin_dir="${render_home}/bin"
-	target="${bin_dir}/render-setup"
-	mkdir -p "${bin_dir}"
-	mv -f "${tmp}/${artifact}" "${target}"
+	# ---- make the downloaded wizard executable in place ----
+	target="${tmp}/${artifact}"
 	chmod +x "${target}"
-	ok "Installed - ${target}"
 
-	# ---- idempotently update PATH in the user's shell rc ----
-	update_path "${bin_dir}"
-
-	# ---- clean up before exec (exec skips the EXIT trap) ----
-	rm -rf "${tmp}"
-	trap - EXIT
-
-	# ---- re-attach a TTY and hand off to the wizard, forwarding args ----
+	# ---- run the wizard, then let the EXIT trap delete it ----
+	# Deliberately do NOT `exec`: control must return here so the scratch dir
+	# (and the wizard binary in it) is removed, keeping the bootstrap ephemeral.
 	# When stdin is not a terminal (e.g. piped from `curl | sh`), reconnect it to
 	# the controlling terminal so the wizard can prompt. /dev/tty may EXIST but not
 	# be openable (no controlling terminal, as in CI/containers/agents), so probe
 	# that it can actually be opened before redirecting; otherwise run headless and
 	# let the wizard fall back to its non-interactive path.
 	info "Starting the Render setup wizard..."
+	set +e
 	if [ ! -t 0 ] && (exec 3</dev/tty) 2>/dev/null; then
-		exec "${target}" "$@" </dev/tty
+		"${target}" "$@" </dev/tty
 	else
-		exec "${target}" "$@"
+		"${target}" "$@"
 	fi
+	status=$?
+	set -e
+	exit "${status}"
 }
 
 main "$@"
