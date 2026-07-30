@@ -9,7 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"time"
+
+	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/render-lab/render-install-wizard/internal/configedit"
 	"github.com/render-lab/render-install-wizard/internal/execx"
@@ -105,6 +108,16 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 		return fmt.Errorf("codex: no MCP config path for home %q", t.home)
 	}
 
+	// Nothing to do when the flag and the desired table are both already in place.
+	// This is what keeps a rerun a true no-op (F13) regardless of which writer
+	// produced the current state: without it, a `codex mcp add` that rejects an
+	// existing server would fall through to the file writer and reserialize a
+	// config that was already correct — discarding the user's comments for no
+	// reason at all.
+	if t.alreadyConfigured(path) {
+		return nil
+	}
+
 	// Inserted textually and at the top, so it survives a hand-edited file intact
 	// and is guaranteed to precede every [mcp_servers.*] table.
 	if err := configedit.EnsureTOMLRootKey(path, rmcpClientKey, "true"); err != nil {
@@ -118,6 +131,33 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 		return fmt.Errorf("codex: write MCP config: %w", err)
 	}
 	return nil
+}
+
+// alreadyConfigured reports whether path already enables the remote MCP client and
+// holds exactly the [mcp_servers.render] table Configure would write. An
+// unreadable, unparseable, or mismatched config reports false so configuration
+// proceeds.
+func (t *Tool) alreadyConfigured(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	if enabled, _ := cfg[rmcpClientKey].(bool); !enabled {
+		return false
+	}
+	servers, ok := cfg["mcp_servers"].(map[string]any)
+	if !ok {
+		return false
+	}
+	current, ok := servers[render.MCPServerName].(map[string]any)
+	if !ok {
+		return false
+	}
+	return reflect.DeepEqual(current, t.mcpServer())
 }
 
 // addViaCLI attempts to register the Render MCP server through `codex mcp add`,

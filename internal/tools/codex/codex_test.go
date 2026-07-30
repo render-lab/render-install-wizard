@@ -306,6 +306,92 @@ func TestConfigureReplacesStaleRenderTable(t *testing.T) {
 	}
 }
 
+// TestConfigureIsNoOpWhenAlreadyCorrect guards F13 across the delegated path:
+// without it a rerun would attempt `codex mcp add`, fail on the existing server,
+// fall through to the file writer, and reserialize a config that was already
+// correct -- discarding the user's comments for no reason.
+func TestConfigureIsNoOpWhenAlreadyCorrect(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	sel := tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}
+
+	if err := (&Tool{home: home, auth: render.AuthModeOAuth}).Configure(context.Background(), sel); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var ran bool
+	tool := &Tool{
+		home:     home,
+		auth:     render.AuthModeOAuth,
+		lookPath: func(string) (string, error) { return "/usr/local/bin/codex", nil },
+		run:      func(context.Context, string, ...string) error { ran = true; return nil },
+	}
+	if err := tool.Configure(context.Background(), sel); err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Error("rerun invoked the CLI despite the config already being correct")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("rerun changed the file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestConfigureRewritesStaleEntry ensures the no-op guard cannot mask a stale
+// entry: a differing URL must still be corrected.
+func TestConfigureRewritesStaleEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := "experimental_use_rmcp_client = true\n\n[mcp_servers.render]\nurl = \"https://old.example.com/mcp\"\n"
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := renderServer(t, readConfig(t, home))
+	if got := server["url"]; got != render.MCPServerURL {
+		t.Errorf("stale url not corrected: %v", got)
+	}
+}
+
+// TestConfigureAddsFlagToConfigMissingIt covers an existing config that already
+// has the render table but predates the flag: the flag must be added.
+func TestConfigureAddsFlagToConfigMissingIt(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := "[mcp_servers.render]\nurl = \"" + render.MCPServerURL + "\"\n"
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), tools.Selection{Components: []ids.ComponentID{ids.ComponentMCP}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readConfig(t, home)[rmcpClientKey]; got != true {
+		t.Errorf("%s not added to a config that predates it: %#v", rmcpClientKey, got)
+	}
+}
+
 func TestConfigureWithoutMCP(t *testing.T) {
 	home := t.TempDir()
 	tool := &Tool{home: home, auth: render.AuthModeOAuth}

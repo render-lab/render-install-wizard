@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/render-lab/render-install-wizard/internal/configedit"
@@ -104,6 +105,15 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 	if !ok {
 		return fmt.Errorf("claudecode: no MCP config path for home %q", t.home)
 	}
+	// Nothing to do when the desired entry is already present. This is what keeps
+	// a rerun a true no-op (F13) regardless of which writer produced the current
+	// state: without it, `claude mcp add-json` would fail on the existing server,
+	// fall through to the file writer, and rewrite an entry that was already
+	// correct — churning the file's mtime and waking file-watchers in running
+	// agents.
+	if t.alreadyConfigured(path) {
+		return nil
+	}
 	if t.addViaCLI(ctx) {
 		return nil
 	}
@@ -111,6 +121,39 @@ func (t *Tool) Configure(ctx context.Context, sel tools.Selection) error {
 		return fmt.Errorf("claudecode: write MCP config: %w", err)
 	}
 	return nil
+}
+
+// alreadyConfigured reports whether path already holds exactly the mcpServers.render
+// entry Configure would write. An unreadable, unparseable, or absent entry reports
+// false so configuration proceeds.
+func (t *Tool) alreadyConfigured(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+	raw, ok := cfg.MCPServers[render.MCPServerName]
+	if !ok {
+		return false
+	}
+	var current any
+	if err := json.Unmarshal(raw, &current); err != nil {
+		return false
+	}
+	want, err := json.Marshal(t.mcpEntry())
+	if err != nil {
+		return false
+	}
+	var desired any
+	if err := json.Unmarshal(want, &desired); err != nil {
+		return false
+	}
+	return reflect.DeepEqual(current, desired)
 }
 
 // addViaCLI attempts to register the Render MCP server through

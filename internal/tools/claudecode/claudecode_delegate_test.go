@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/render-lab/render-install-wizard/internal/ids"
@@ -192,6 +193,86 @@ func TestUnconfigureFallsBackWhenCLIFails(t *testing.T) {
 	}
 	if cfg["keepMe"] == nil {
 		t.Errorf("unrelated key lost: %s", data)
+	}
+}
+
+// TestConfigureIsNoOpWhenAlreadyCorrect is the guard for F13 across the delegated
+// path. Without it a rerun would call `claude mcp add-json`, get an "already
+// exists" error, fall through to the file writer, and rewrite an entry that was
+// already correct -- churning the mtime and waking file-watchers in running agents.
+func TestConfigureIsNoOpWhenAlreadyCorrect(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude.json")
+	tool := &Tool{
+		home:     home,
+		auth:     render.AuthModeOAuth,
+		lookPath: claudeFound,
+		run:      func(context.Context, string, ...string) error { return nil },
+	}
+
+	// First run establishes the desired state via the file writer.
+	bare := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := bare.Configure(context.Background(), mcpSelection()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statBefore, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second run must touch neither the CLI nor the file.
+	var ran bool
+	tool.run = func(context.Context, string, ...string) error { ran = true; return nil }
+	if err := tool.Configure(context.Background(), mcpSelection()); err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Error("rerun invoked the CLI despite the config already being correct")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("rerun changed the file:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	statAfter, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !statAfter.ModTime().Equal(statBefore.ModTime()) {
+		t.Error("rerun rewrote the file, changing its mtime")
+	}
+}
+
+// TestConfigureRewritesStaleEntry is the other half: an entry that exists but
+// differs must still be corrected, so the no-op guard cannot mask a stale URL.
+func TestConfigureRewritesStaleEntry(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".claude.json")
+	stale := `{"mcpServers":{"render":{"type":"http","url":"https://old.example.com/mcp"}}}`
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &Tool{home: home, auth: render.AuthModeOAuth}
+	if err := tool.Configure(context.Background(), mcpSelection()); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), render.MCPServerURL) {
+		t.Errorf("stale entry not corrected: %s", data)
+	}
+	if strings.Contains(string(data), "old.example.com") {
+		t.Errorf("stale URL survived: %s", data)
 	}
 }
 
