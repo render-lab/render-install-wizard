@@ -17,7 +17,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-13]
+        # macos-13 (Intel) is omitted: this org can't reliably schedule that
+        # runner (jobs sit queued for hours until the run is auto-cancelled), and
+        # the harness only exercises platform-agnostic config-editing logic that
+        # macos-latest already covers.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
