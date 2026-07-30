@@ -57,20 +57,53 @@ func New() *Component {
 // ID returns the canonical identifier for the agent skills component.
 func (c *Component) ID() ids.ComponentID { return ids.ComponentSkills }
 
-// Detect reports whether agent skills appear to be installed.
+// Detect reports whether *Render's* agent skills appear to be installed.
 //
-// This is a heuristic: the official installer writes many per-tool directories
-// that aren't fully tracked here, so we look only for well-known markers — the
-// universal skills directory (~/.agents/skills) or Claude's per-tool skills
-// directory (~/.claude/skills). Presence of either is treated as installed.
+// It looks for a Render-owned skill directory inside the known skills roots — the
+// universal directory (~/.agents/skills) and Claude's per-tool directory
+// (~/.claude/skills). Every skill in render-oss/skills is named with the
+// render.SkillsDirPrefix prefix, so the presence of any such entry means Render's
+// skills are there.
+//
+// It deliberately does not treat the roots themselves as markers. Those
+// directories are vendor-neutral and shared by every skills publisher, so anyone
+// who had installed unrelated skills would look "already installed" and the
+// orchestrator would skip installing Render's skills entirely.
+//
+// This remains a heuristic: the official installer writes per-tool directories
+// beyond the two checked here, so a false negative just means a harmless
+// reinstall.
 func (c *Component) Detect(ctx context.Context) (bool, error) {
-	if dirExists(render.UniversalSkillsDir(c.home)) {
-		return true, nil
-	}
-	if dirExists(claudeSkillsDir(c.home)) {
-		return true, nil
+	for _, root := range c.skillRoots() {
+		if hasRenderSkill(root) {
+			return true, nil
+		}
 	}
 	return false, nil
+}
+
+// skillRoots returns the skills directories inspected for a Render-owned skill.
+func (c *Component) skillRoots() []string {
+	return []string{
+		render.UniversalSkillsDir(c.home),
+		claudeSkillsDir(c.home),
+	}
+}
+
+// hasRenderSkill reports whether dir contains an entry named with Render's skill
+// prefix. Symlinks count: the skills installer links rather than copies by
+// default, so a linked skill is a legitimately installed one.
+func hasRenderSkill(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), render.SkillsDirPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // Install installs agent skills by delegating to the official installer,
@@ -218,12 +251,6 @@ func (c *Component) Status(ctx context.Context) (components.Status, error) {
 		state = components.StateInstalled
 	}
 	return components.Status{ID: ids.ComponentSkills, State: state}, nil
-}
-
-// dirExists reports whether path exists and is a directory.
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 // claudeSkillsDir returns Claude Code's per-tool skills directory under home.

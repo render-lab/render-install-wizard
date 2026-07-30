@@ -27,6 +27,13 @@ const (
 // It is a first-party Render repository (same trust domain as the Render CLI).
 const SkillsRepo = "render-oss/skills"
 
+// SkillsDirPrefix is the name prefix every skill in SkillsRepo carries (e.g.
+// render-deploy, render-postgres). It identifies a Render-owned skill inside a
+// skills directory, which is otherwise vendor-neutral and shared with every other
+// skills publisher — so detection must match on this prefix rather than on the
+// presence of the containing directory.
+const SkillsDirPrefix = "render-"
+
 // SkillsCLISpec pins the third-party `skills` npm package to an exact version so
 // `npx` executes a known, immutable installer rather than resolving whatever is
 // latest at run time (a supply-chain hazard, since npx would run unverified code

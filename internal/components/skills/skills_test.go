@@ -272,7 +272,7 @@ func TestInstallDryRunSkipsRunner(t *testing.T) {
 
 func TestDetectUniversalSkillsDir(t *testing.T) {
 	home := t.TempDir()
-	if err := os.MkdirAll(render.UniversalSkillsDir(home), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(render.UniversalSkillsDir(home), "render-deploy"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	c := &Component{home: home, lookPath: lookPathFunc()}
@@ -281,13 +281,13 @@ func TestDetectUniversalSkillsDir(t *testing.T) {
 		t.Fatalf("Detect: %v", err)
 	}
 	if !got {
-		t.Fatal("expected Detect true with universal skills dir present")
+		t.Fatal("expected Detect true with a Render skill in the universal skills dir")
 	}
 }
 
 func TestDetectClaudeSkillsDir(t *testing.T) {
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills", "render-postgres"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	c := &Component{home: home, lookPath: lookPathFunc()}
@@ -296,7 +296,59 @@ func TestDetectClaudeSkillsDir(t *testing.T) {
 		t.Fatalf("Detect: %v", err)
 	}
 	if !got {
-		t.Fatal("expected Detect true with claude skills dir present")
+		t.Fatal("expected Detect true with a Render skill in Claude's skills dir")
+	}
+}
+
+// TestDetectIgnoresForeignSkills is the regression guard for the bug where the
+// vendor-neutral skills roots were themselves treated as markers. Anyone who had
+// installed unrelated skills looked "already installed", so the orchestrator
+// recorded "unchanged" and Render's skills were never installed at all.
+func TestDetectIgnoresForeignSkills(t *testing.T) {
+	home := t.TempDir()
+	for _, dir := range []string{
+		filepath.Join(render.UniversalSkillsDir(home), "some-other-vendor-skill"),
+		filepath.Join(render.UniversalSkillsDir(home), "find-skills"),
+		filepath.Join(home, ".claude", "skills", "unrelated-skill"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c := &Component{home: home, lookPath: lookPathFunc()}
+	got, err := c.Detect(context.Background())
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if got {
+		t.Error("Detect reported installed with only foreign skills present; Render's skills would be silently skipped")
+	}
+}
+
+// TestDetectAcceptsSymlinkedSkill matters because the skills installer links into
+// agent directories rather than copying by default.
+func TestDetectAcceptsSymlinkedSkill(t *testing.T) {
+	home := t.TempDir()
+	root := render.UniversalSkillsDir(home)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "render-debug")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "render-debug")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	c := &Component{home: home, lookPath: lookPathFunc()}
+	got, err := c.Detect(context.Background())
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if !got {
+		t.Error("expected Detect true for a symlinked Render skill")
 	}
 }
 
