@@ -5,9 +5,8 @@
 //
 // The registry is the authority on which components/tools the binary can
 // actually act on. IDs that appear in a plan but have no compiled handler are
-// skipped with a recorded "skipped" result rather than failing — this is the
-// must-ignore-unknown rule that keeps an older binary working against a newer
-// remote manifest.
+// skipped with a recorded "skipped" result rather than failing, so an unrecognized
+// ID degrades to a no-op instead of aborting the run.
 package orchestrator
 
 import (
@@ -48,7 +47,7 @@ type Options struct {
 
 // Plan describes what to do: which components to act on, which tools to target,
 // and how (Options). Components and Tools may contain IDs the registry does not
-// know; those are skipped (must-ignore-unknown).
+// know; those are skipped rather than treated as an error.
 type Plan struct {
 	Components []ids.ComponentID
 	Tools      []ids.ToolID

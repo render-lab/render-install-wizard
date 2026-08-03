@@ -13,7 +13,12 @@ remains — mostly out-of-repo coordination.
       `text/x-shellscript`, Cloudflare-cached; kept byte-identical to `scripts/agents.sh` by
       `sync-agents-sh.yml`. Confirm `curl -fsSL render.com/agents.sh` returns the script and a browser
       hitting `/agents` still gets the Sanity page.
-- [ ] **First release** — cut and publish (see runbook below). Checksums visible on the release.
+- [x] **First release** — [`v0.1.0`](https://github.com/render-lab/render-install-wizard/releases/tag/v0.1.0)
+      is published (not a draft, not a prerelease), carrying the four `render-setup_<os>_<arch>`
+      binaries and `checksums.txt`, so `latest/download` resolves. Note it was cut *before* signing
+      landed and therefore has **no `checksums.txt.sig`/`.pem` and no SLSA provenance** — the
+      verification in step 3 of the runbook applies from the next release onward, and any
+      instructions pointed at users should not promise it for `v0.1.0`.
 - [ ] **Clean-machine end-to-end** — `curl -fsSL render.com/agents.sh | sh` installs and runs in
       production on a fresh macOS and Linux box.
 

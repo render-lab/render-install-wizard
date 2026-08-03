@@ -1,7 +1,7 @@
 GO ?= go
 PKGS := ./...
 
-.PHONY: all build vet fmt fmt-check lint test tidy schema clean
+.PHONY: all build vet fmt fmt-check lint test tidy clean
 
 all: build vet lint test
 
@@ -31,10 +31,6 @@ lint: fmt-check vet
 
 test:
 	$(GO) test $(PKGS)
-
-# Manifest schema validation lives in internal/manifest tests.
-schema:
-	$(GO) test ./internal/manifest/...
 
 tidy:
 	$(GO) mod tidy

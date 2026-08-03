@@ -10,8 +10,6 @@
 // idempotent: applying the same patch twice produces byte-identical output on
 // the second write.
 //
-// Merge semantics (map-based helpers): objects (maps) are merged recursively,
-// while arrays and scalars in the patch REPLACE the existing value at that key.
 // Missing or empty target files are treated as an empty object.
 //
 // # JSON: surgical, format- and comment-preserving edits
@@ -26,8 +24,8 @@
 //
 // # TOML: map-based, no comment/order preservation
 //
-// TOML is still edited via a map model (MergeTOMLFile/SetTOMLValue/DeleteTOMLPath):
-// it unmarshals, mutates, and re-marshals, so TOML comments and original section
+// TOML is still edited via a map model (SetTOMLValue/DeleteTOMLPath): it
+// unmarshals, mutates, and re-marshals, so TOML comments and original section
 // ordering are not preserved. Round-trip tests for TOML therefore assert
 // *semantic* equality rather than byte equality. Callers that can delegate the
 // edit to the owning tool's own CLI should prefer that and treat these helpers as
@@ -49,54 +47,6 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/tailscale/hujson"
 )
-
-// MergeJSONFile deep-merges the JSON object encoded in patch into the JSON
-// object stored at path and writes the result back atomically.
-//
-// A missing or empty file at path is treated as an empty object ({}). Parent
-// directories are created as needed. Objects are merged recursively; arrays and
-// scalars in patch replace the existing value at their key. Keys present in the
-// file but absent from patch are preserved untouched.
-func MergeJSONFile(path string, patch []byte) error {
-	dst, err := readJSONMap(path)
-	if err != nil {
-		return err
-	}
-	src, err := parseJSONMap(patch)
-	if err != nil {
-		return fmt.Errorf("configedit: invalid JSON patch: %w", err)
-	}
-	deepMerge(dst, src)
-	out, err := marshalJSON(dst)
-	if err != nil {
-		return fmt.Errorf("configedit: encode JSON for %s: %w", path, err)
-	}
-	return atomicWrite(path, out)
-}
-
-// MergeTOMLFile deep-merges the TOML document encoded in patch into the TOML
-// document stored at path and writes the result back atomically.
-//
-// Semantics mirror MergeJSONFile: a missing or empty file is treated as an empty
-// table, objects/tables merge recursively, arrays and scalars replace, and
-// unrelated keys and sections are preserved. Note that TOML comments and the
-// original section ordering are not preserved (see the package documentation).
-func MergeTOMLFile(path string, patch []byte) error {
-	dst, err := readTOMLMap(path)
-	if err != nil {
-		return err
-	}
-	src, err := parseTOMLMap(patch)
-	if err != nil {
-		return fmt.Errorf("configedit: invalid TOML patch: %w", err)
-	}
-	deepMerge(dst, src)
-	out, err := marshalTOML(dst)
-	if err != nil {
-		return fmt.Errorf("configedit: encode TOML for %s: %w", path, err)
-	}
-	return atomicWrite(path, out)
-}
 
 // SetJSONValue sets (creating or wholesale-replacing) value at the nested key
 // path keys in the JSON/JSONC file at path, writing the result atomically.
@@ -282,22 +232,6 @@ func DeleteTOMLPath(path string, keys ...string) error {
 	return atomicWrite(path, out)
 }
 
-// deepMerge recursively merges src into dst. When a key maps to an object
-// (map[string]any) in both dst and src, the two objects are merged recursively.
-// Otherwise the value from src replaces the value in dst — this includes arrays
-// and scalars, which are treated as opaque replacements rather than merged.
-func deepMerge(dst, src map[string]any) {
-	for k, sv := range src {
-		if sm, ok := sv.(map[string]any); ok {
-			if dm, ok := dst[k].(map[string]any); ok {
-				deepMerge(dm, sm)
-				continue
-			}
-		}
-		dst[k] = sv
-	}
-}
-
 // deleteKeyPath removes the value at the nested key path keys from m, returning
 // true if a deletion occurred. It descends only through map[string]any nodes and
 // reports false (no change) if any intermediate key is missing or not an object,
@@ -378,26 +312,6 @@ func atomicWrite(path string, data []byte) error {
 	return nil
 }
 
-// readJSONMap reads and parses the JSON object at path, returning an empty map
-// for a missing or empty file.
-func readJSONMap(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return map[string]any{}, nil
-		}
-		return nil, fmt.Errorf("configedit: read %s: %w", path, err)
-	}
-	if len(bytes.TrimSpace(data)) == 0 {
-		return map[string]any{}, nil
-	}
-	m, err := parseJSONMap(data)
-	if err != nil {
-		return nil, fmt.Errorf("configedit: parse %s: %w", path, err)
-	}
-	return m, nil
-}
-
 // readTOMLMap reads and parses the TOML document at path, returning an empty map
 // for a missing or empty file.
 func readTOMLMap(path string) (map[string]any, error) {
@@ -438,23 +352,6 @@ func loadTOMLForDelete(path string) (m map[string]any, existed bool, err error) 
 	return m, true, nil
 }
 
-// parseJSONMap unmarshals a JSON object into a map, normalizing a null document
-// to an empty (non-nil) map so callers can always merge into it safely. It uses
-// a json.Decoder with UseNumber so integers larger than 2^53 survive a
-// decode/encode round trip without being coerced to float64 (F09).
-func parseJSONMap(data []byte) (map[string]any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	var m map[string]any
-	if err := dec.Decode(&m); err != nil {
-		return nil, err
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	return m, nil
-}
-
 // parseTOMLMap unmarshals a TOML document into a map, normalizing an empty
 // document to an empty (non-nil) map.
 func parseTOMLMap(data []byte) (map[string]any, error) {
@@ -466,16 +363,6 @@ func parseTOMLMap(data []byte) (map[string]any, error) {
 		m = map[string]any{}
 	}
 	return m, nil
-}
-
-// marshalJSON encodes m as indented JSON with a trailing newline. encoding/json
-// emits map keys in sorted order, giving deterministic (idempotent) output.
-func marshalJSON(m map[string]any) ([]byte, error) {
-	out, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(out, '\n'), nil
 }
 
 // marshalTOML encodes m as TOML. go-toml/v2 emits map keys in a deterministic

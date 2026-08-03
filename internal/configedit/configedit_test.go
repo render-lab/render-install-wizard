@@ -72,144 +72,6 @@ func assertNoTempFiles(t *testing.T, path string) {
 	}
 }
 
-func TestMergeJSONFile_PreservesUnrelatedEntries(t *testing.T) {
-	path := copyFixture(t, "cursor_mcp.json")
-	original := readJSON(t, path)
-
-	patch := []byte(`{"mcpServers":{"render":{"url":"https://mcp.render.com/mcp"}}}`)
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-
-	got := readJSON(t, path)
-
-	// The new render server was added.
-	servers, ok := got["mcpServers"].(map[string]any)
-	if !ok {
-		t.Fatalf("mcpServers missing or wrong type: %T", got["mcpServers"])
-	}
-	render, ok := servers["render"].(map[string]any)
-	if !ok {
-		t.Fatalf("render server missing: %#v", servers)
-	}
-	if render["url"] != "https://mcp.render.com/mcp" {
-		t.Fatalf("render url wrong: %#v", render)
-	}
-
-	// The pre-existing server is untouched.
-	origServers := original["mcpServers"].(map[string]any)
-	if !reflect.DeepEqual(servers["acme-tools"], origServers["acme-tools"]) {
-		t.Fatalf("pre-existing server clobbered:\n got: %#v\nwant: %#v",
-			servers["acme-tools"], origServers["acme-tools"])
-	}
-
-	// Unrelated top-level keys are preserved.
-	for _, k := range []string{"editor.formatOnSave", "workbench.colorTheme"} {
-		if !reflect.DeepEqual(got[k], original[k]) {
-			t.Fatalf("unrelated key %q changed: got %#v want %#v", k, got[k], original[k])
-		}
-	}
-
-	assertNoTempFiles(t, path)
-}
-
-func TestMergeJSONFile_RoundTripSemanticEqual(t *testing.T) {
-	path := copyFixture(t, "cursor_mcp.json")
-	original := readJSON(t, path)
-
-	patch := []byte(`{"mcpServers":{"render":{"url":"https://mcp.render.com/mcp","type":"http"}}}`)
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-	if err := DeleteJSONPath(path, "mcpServers", "render"); err != nil {
-		t.Fatalf("DeleteJSONPath: %v", err)
-	}
-
-	got := readJSON(t, path)
-	// We assert SEMANTIC equality (parsed values), not byte equality: the
-	// map-based engine re-orders keys and re-indents, so the raw bytes differ
-	// from the original even though the content is identical.
-	if !reflect.DeepEqual(got, original) {
-		t.Fatalf("round-trip not semantically equal:\n got: %#v\nwant: %#v", got, original)
-	}
-}
-
-func TestMergeJSONFile_Idempotent(t *testing.T) {
-	path := copyFixture(t, "cursor_mcp.json")
-	patch := []byte(`{"mcpServers":{"render":{"url":"https://mcp.render.com/mcp"}}}`)
-
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("first merge: %v", err)
-	}
-	first, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read after first merge: %v", err)
-	}
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("second merge: %v", err)
-	}
-	second, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read after second merge: %v", err)
-	}
-	if string(first) != string(second) {
-		t.Fatalf("merge not idempotent (byte-level):\nfirst:\n%s\nsecond:\n%s", first, second)
-	}
-}
-
-func TestMergeJSONFile_MissingFileCreatesIt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "dir", "settings.json")
-	patch := []byte(`{"mcpServers":{"render":{"url":"https://mcp.render.com/mcp"}}}`)
-
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile into missing path: %v", err)
-	}
-
-	got := readJSON(t, path)
-	want := map[string]any{
-		"mcpServers": map[string]any{
-			"render": map[string]any{"url": "https://mcp.render.com/mcp"},
-		},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("created file content wrong:\n got: %#v\nwant: %#v", got, want)
-	}
-	assertNoTempFiles(t, path)
-}
-
-func TestMergeJSONFile_EmptyFileTreatedAsObject(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "empty.json")
-	if err := os.WriteFile(path, []byte("   \n"), 0o644); err != nil {
-		t.Fatalf("write empty file: %v", err)
-	}
-	patch := []byte(`{"a":1}`)
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-	got := readJSON(t, path)
-	if got["a"] != float64(1) {
-		t.Fatalf("expected a=1, got %#v", got)
-	}
-}
-
-func TestMergeJSONFile_ArrayReplacesNotAppends(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "arr.json")
-	if err := os.WriteFile(path, []byte(`{"list":[1,2,3],"keep":true}`), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := MergeJSONFile(path, []byte(`{"list":[9]}`)); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-	got := readJSON(t, path)
-	list, ok := got["list"].([]any)
-	if !ok || len(list) != 1 || list[0] != float64(9) {
-		t.Fatalf("array should be replaced, got %#v", got["list"])
-	}
-	if got["keep"] != true {
-		t.Fatalf("sibling key clobbered: %#v", got)
-	}
-}
-
 func TestDeleteJSONPath_AbsentIsNoOp(t *testing.T) {
 	path := copyFixture(t, "cursor_mcp.json")
 	before, err := os.ReadFile(path)
@@ -253,91 +115,6 @@ func TestDeleteJSONPath_PreservesSiblings(t *testing.T) {
 	}
 }
 
-func TestMergeTOMLFile_PreservesSiblingsAndRoundTrip(t *testing.T) {
-	path := copyFixture(t, "codex_config.toml")
-	original := readTOML(t, path)
-
-	patch := []byte(`[mcp_servers.render]
-command = "npx"
-args = ["-y", "@render/mcp"]
-`)
-	if err := MergeTOMLFile(path, patch); err != nil {
-		t.Fatalf("MergeTOMLFile: %v", err)
-	}
-
-	got := readTOML(t, path)
-
-	// Unrelated top-level keys and sections survive.
-	if got["model"] != "gpt-5" || got["approval_policy"] != "on-request" {
-		t.Fatalf("top-level keys clobbered: %#v", got)
-	}
-	ui, ok := got["ui"].(map[string]any)
-	if !ok || ui["theme"] != "dark" {
-		t.Fatalf("[ui] section clobbered: %#v", got["ui"])
-	}
-
-	servers := got["mcp_servers"].(map[string]any)
-	if _, ok := servers["acme-tools"]; !ok {
-		t.Fatalf("pre-existing mcp server lost: %#v", servers)
-	}
-	if _, ok := servers["render"]; !ok {
-		t.Fatalf("render server not added: %#v", servers)
-	}
-
-	// Round-trip: delete render -> semantically equal to original.
-	if err := DeleteTOMLPath(path, "mcp_servers", "render"); err != nil {
-		t.Fatalf("DeleteTOMLPath: %v", err)
-	}
-	back := readTOML(t, path)
-	if !reflect.DeepEqual(back, original) {
-		t.Fatalf("TOML round-trip not semantically equal:\n got: %#v\nwant: %#v", back, original)
-	}
-	assertNoTempFiles(t, path)
-}
-
-func TestMergeTOMLFile_Idempotent(t *testing.T) {
-	path := copyFixture(t, "codex_config.toml")
-	patch := []byte(`[mcp_servers.render]
-command = "npx"
-`)
-	if err := MergeTOMLFile(path, patch); err != nil {
-		t.Fatalf("first merge: %v", err)
-	}
-	first, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if err := MergeTOMLFile(path, patch); err != nil {
-		t.Fatalf("second merge: %v", err)
-	}
-	second, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if string(first) != string(second) {
-		t.Fatalf("TOML merge not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
-	}
-}
-
-func TestMergeTOMLFile_MissingFileCreatesIt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "config.toml")
-	patch := []byte(`[mcp_servers.render]
-command = "npx"
-`)
-	if err := MergeTOMLFile(path, patch); err != nil {
-		t.Fatalf("MergeTOMLFile: %v", err)
-	}
-	got := readTOML(t, path)
-	servers, ok := got["mcp_servers"].(map[string]any)
-	if !ok {
-		t.Fatalf("mcp_servers missing: %#v", got)
-	}
-	if _, ok := servers["render"]; !ok {
-		t.Fatalf("render not created: %#v", servers)
-	}
-	assertNoTempFiles(t, path)
-}
-
 func TestDeleteTOMLPath_AbsentIsNoOp(t *testing.T) {
 	path := copyFixture(t, "codex_config.toml")
 	before, err := os.ReadFile(path)
@@ -356,61 +133,24 @@ func TestDeleteTOMLPath_AbsentIsNoOp(t *testing.T) {
 	}
 }
 
-func TestClaudeSettings_MergePreservesNestedPermissions(t *testing.T) {
-	path := copyFixture(t, "claude_settings.json")
-	original := readJSON(t, path)
+// The tests below replace an equivalent set that exercised MergeJSONFile /
+// MergeTOMLFile. Those functions were removed as dead code (no caller outside
+// their own tests), but several of the properties they covered belong to
+// machinery that is still live -- atomicWrite's permission handling, and the
+// map round-trip that SetTOMLValue and DeleteTOMLPath share -- so the coverage is
+// carried over onto the surviving API rather than dropped with them.
 
-	patch := []byte(`{"enableRenderSkills":true,"telemetry":{"renderInstaller":"v1"}}`)
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-	got := readJSON(t, path)
-
-	// Nested object merged, not replaced: existing telemetry.enabled kept.
-	tel := got["telemetry"].(map[string]any)
-	if tel["enabled"] != false {
-		t.Fatalf("telemetry.enabled lost during nested merge: %#v", tel)
-	}
-	if tel["renderInstaller"] != "v1" {
-		t.Fatalf("telemetry.renderInstaller not added: %#v", tel)
-	}
-	if got["enableRenderSkills"] != true {
-		t.Fatalf("new top-level key not added: %#v", got)
-	}
-	// Untouched permissions block survives verbatim.
-	if !reflect.DeepEqual(got["permissions"], original["permissions"]) {
-		t.Fatalf("permissions changed:\n got: %#v\nwant: %#v", got["permissions"], original["permissions"])
-	}
-}
-
-func TestMergeJSONFile_InvalidPatchErrors(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "x.json")
-	if err := MergeJSONFile(path, []byte(`{not json`)); err == nil {
-		t.Fatalf("expected error for invalid JSON patch")
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("invalid patch should not create a file")
-	}
-}
-
-func TestMergeJSONFile_AtomicityValidAndParseable(t *testing.T) {
-	path := copyFixture(t, "cursor_mcp.json")
-	patch := []byte(`{"mcpServers":{"render":{"url":"https://mcp.render.com/mcp"}}}`)
-	if err := MergeJSONFile(path, patch); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
-	}
-	// File must be valid, parseable JSON with no leftover temp files.
-	_ = readJSON(t, path)
-	assertNoTempFiles(t, path)
-}
-
-func TestMergeJSONFile_PreservesFileMode(t *testing.T) {
+// TestSetJSONValuePreservesFileMode guards F07 on an existing file: updating a
+// config must not broaden its permissions. Also covered on unix by
+// TestAtomicWritePermissions, which additionally forces a permissive umask; this
+// one runs everywhere.
+func TestSetJSONValuePreservesFileMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mode.json")
 	if err := os.WriteFile(path, []byte(`{"a":1}`), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if err := MergeJSONFile(path, []byte(`{"b":2}`)); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
+	if err := SetJSONValue(path, 2, "b"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -421,18 +161,174 @@ func TestMergeJSONFile_PreservesFileMode(t *testing.T) {
 	}
 }
 
-func TestMergeJSONFile_NewFileMode0600(t *testing.T) {
+// TestSetJSONValueNewFileMode0600 guards F07 on creation: new wizard-owned config
+// files must be private, since they can carry MCP Authorization headers or
+// account/session state.
+func TestSetJSONValueNewFileMode0600(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.json")
-	if err := MergeJSONFile(path, []byte(`{"a":1}`)); err != nil {
-		t.Fatalf("MergeJSONFile: %v", err)
+	if err := SetJSONValue(path, 1, "a"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	// New wizard-owned config files must be private (F07): they can carry MCP
-	// Authorization headers or account/session state.
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("new file mode wrong: got %o want 600", info.Mode().Perm())
 	}
+}
+
+// TestSetJSONValueEmptyFileTreatedAsObject covers a whitespace-only config, which
+// is neither absent (so the missing-file path does not apply) nor parseable as an
+// object. It has to be treated as {} rather than erroring.
+func TestSetJSONValueEmptyFileTreatedAsObject(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.json")
+	if err := os.WriteFile(path, []byte("   \n"), 0o644); err != nil {
+		t.Fatalf("write empty file: %v", err)
+	}
+	if err := SetJSONValue(path, 1, "a"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
+	}
+	if got := readJSON(t, path); got["a"] != float64(1) {
+		t.Fatalf("expected a=1, got %#v", got)
+	}
+	assertNoTempFiles(t, path)
+}
+
+// TestSetJSONValueLeavesFileValidAndClean checks the atomic-write contract on a
+// real-world fixture: the result parses, and no temp file is left behind.
+func TestSetJSONValueLeavesFileValidAndClean(t *testing.T) {
+	path := copyFixture(t, "cursor_mcp.json")
+	entry := map[string]any{"url": "https://mcp.render.com/mcp"}
+	if err := SetJSONValue(path, entry, "mcpServers", "render"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
+	}
+	_ = readJSON(t, path)
+	assertNoTempFiles(t, path)
+}
+
+// TestSetJSONValueNestedPathPreservesSiblings uses Claude's real settings shape to
+// check that writing a deep key leaves its siblings alone.
+//
+// This is the analogue of the old nested-merge test, not a copy of it: SetJSONValue
+// replaces the value at its target key wholesale rather than deep-merging, so the
+// way to add one field without disturbing another is to address the deeper path.
+// Passing an object at "telemetry" would -- correctly -- replace the whole table.
+func TestSetJSONValueNestedPathPreservesSiblings(t *testing.T) {
+	path := copyFixture(t, "claude_settings.json")
+	original := readJSON(t, path)
+
+	if err := SetJSONValue(path, "v1", "telemetry", "renderInstaller"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
+	}
+	if err := SetJSONValue(path, true, "enableRenderSkills"); err != nil {
+		t.Fatalf("SetJSONValue: %v", err)
+	}
+	got := readJSON(t, path)
+
+	tel, ok := got["telemetry"].(map[string]any)
+	if !ok {
+		t.Fatalf("telemetry missing or wrong type: %T", got["telemetry"])
+	}
+	if tel["renderInstaller"] != "v1" {
+		t.Fatalf("telemetry.renderInstaller not added: %#v", tel)
+	}
+	if tel["enabled"] != false {
+		t.Fatalf("sibling telemetry.enabled lost: %#v", tel)
+	}
+	if got["enableRenderSkills"] != true {
+		t.Fatalf("new top-level key not added: %#v", got)
+	}
+	if !reflect.DeepEqual(got["permissions"], original["permissions"]) {
+		t.Fatalf("permissions changed:\n got: %#v\nwant: %#v", got["permissions"], original["permissions"])
+	}
+}
+
+// TestSetTOMLValuePreservesSiblingsAndRoundTrip covers the TOML map round-trip that
+// SetTOMLValue and DeleteTOMLPath share: unrelated keys, tables, and sibling
+// servers survive the write, and removing what was added returns the document to
+// its original content.
+//
+// Equality is semantic rather than byte-for-byte because the TOML path
+// unmarshals and re-marshals, which does not preserve comments or original
+// ordering (see the package documentation).
+func TestSetTOMLValuePreservesSiblingsAndRoundTrip(t *testing.T) {
+	path := copyFixture(t, "codex_config.toml")
+	original := readTOML(t, path)
+
+	server := map[string]any{"command": "npx", "args": []any{"-y", "@render/mcp"}}
+	if err := SetTOMLValue(path, server, "mcp_servers", "render"); err != nil {
+		t.Fatalf("SetTOMLValue: %v", err)
+	}
+
+	got := readTOML(t, path)
+	if got["model"] != "gpt-5" || got["approval_policy"] != "on-request" {
+		t.Fatalf("top-level keys clobbered: %#v", got)
+	}
+	ui, ok := got["ui"].(map[string]any)
+	if !ok || ui["theme"] != "dark" {
+		t.Fatalf("[ui] section clobbered: %#v", got["ui"])
+	}
+	servers, ok := got["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp_servers missing: %#v", got)
+	}
+	if _, ok := servers["acme-tools"]; !ok {
+		t.Fatalf("pre-existing mcp server lost: %#v", servers)
+	}
+	if _, ok := servers["render"]; !ok {
+		t.Fatalf("render server not added: %#v", servers)
+	}
+
+	if err := DeleteTOMLPath(path, "mcp_servers", "render"); err != nil {
+		t.Fatalf("DeleteTOMLPath: %v", err)
+	}
+	if back := readTOML(t, path); !reflect.DeepEqual(back, original) {
+		t.Fatalf("TOML round-trip not semantically equal:\n got: %#v\nwant: %#v", back, original)
+	}
+	assertNoTempFiles(t, path)
+}
+
+// TestSetTOMLValueIdempotent checks a repeated write is byte-identical, which is
+// what keeps a wizard re-run from churning the file's mtime and waking
+// file-watchers in running agents.
+func TestSetTOMLValueIdempotent(t *testing.T) {
+	path := copyFixture(t, "codex_config.toml")
+	server := map[string]any{"command": "npx"}
+
+	if err := SetTOMLValue(path, server, "mcp_servers", "render"); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if err := SetTOMLValue(path, server, "mcp_servers", "render"); err != nil {
+		t.Fatalf("second write: %v", err)
+	}
+	second, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("TOML write not idempotent:\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
+}
+
+// TestSetTOMLValueMissingFileCreatesIt covers a first run on a machine where the
+// tool has no config yet: the file and its parent directory are created.
+func TestSetTOMLValueMissingFileCreatesIt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "config.toml")
+	if err := SetTOMLValue(path, map[string]any{"command": "npx"}, "mcp_servers", "render"); err != nil {
+		t.Fatalf("SetTOMLValue: %v", err)
+	}
+	got := readTOML(t, path)
+	servers, ok := got["mcp_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp_servers missing: %#v", got)
+	}
+	if _, ok := servers["render"]; !ok {
+		t.Fatalf("render not created: %#v", servers)
+	}
+	assertNoTempFiles(t, path)
 }

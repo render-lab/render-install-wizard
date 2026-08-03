@@ -21,8 +21,8 @@ func TestAtomicWritePermissions(t *testing.T) {
 	t.Run("new file is 0600 and created dir is 0700", func(t *testing.T) {
 		base := t.TempDir()
 		path := filepath.Join(base, "sub", "config.json")
-		if err := MergeJSONFile(path, []byte(`{"a":1}`)); err != nil {
-			t.Fatalf("MergeJSONFile: %v", err)
+		if err := SetJSONValue(path, 1, "a"); err != nil {
+			t.Fatalf("SetJSONValue: %v", err)
 		}
 
 		fi, err := os.Stat(path)
@@ -48,8 +48,8 @@ func TestAtomicWritePermissions(t *testing.T) {
 		if err := os.WriteFile(path, []byte(`{"a":1}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := MergeJSONFile(path, []byte(`{"b":2}`)); err != nil {
-			t.Fatalf("MergeJSONFile: %v", err)
+		if err := SetJSONValue(path, 2, "b"); err != nil {
+			t.Fatalf("SetJSONValue: %v", err)
 		}
 		fi, err := os.Stat(path)
 		if err != nil {

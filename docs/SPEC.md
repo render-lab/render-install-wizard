@@ -94,22 +94,18 @@ render-install-wizard/
 │   │                              #   CLI install facts, plugin next-step references
 │   ├── wizard/                    # bubbletea TUI: single-axis WHAT picker + summary
 │   ├── orchestrator/              # registry + Execute: selection × detected tools → installers
-│   ├── manifest/                  # remote metadata matrix: schema, parse/validate, ?version fetch
-│   ├── content/                   # fetch render.com/agents/*.md + glamour render + go:embed fallback
 │   ├── detect/                    # OS/arch/WSL/TTY + installed-agent detection
 │   ├── components/{cli,skills,mcp} # the "WHAT": Installer implementations
 │   ├── tools/{claudecode,cursor,codex,opencode} # the "WHERE": Target config writers
 │   ├── configedit/                # merge-not-clobber JSON/TOML editors (atomic writes)
 │   ├── paths/                     # ~/.render layout, artifact/URL scheme, shell PATH edits
-│   ├── cliflags/                  # -y, --components, --agent, --no-login, --json, -r, --version
-│   └── logx/                      # leveled text + --json output
+│   └── cliflags/                  # -y, --components, --agent, --no-login, --json, -r, --version
 │
 ├── deploy/render-com/             # handed to the render.com frontend repo: route-handler.ts,
 │                                  #   vendored agents.sh (byte-identical), README
-├── manifest/manifest.json         # metadata matrix (+ manifest.schema.json)
 ├── testdata/fixtures/             # real-world tool configs for merge tests
 ├── test/e2e/                      # harness, bootstrap_check, failure_check, detect_check, Dockerfile
-└── .github/workflows/             # ci, sync-agents-sh, refresh-content, release, e2e
+└── .github/workflows/             # ci, sync-agents-sh, release, e2e
 ```
 
 ### render.com serving model (researched)
@@ -132,25 +128,31 @@ will configure all"). Rationale: they're the user's own tools; re-picking is fri
 "one Enter installs everything" goal. The user chooses only *what* (CLI/skills/MCP). Escape hatch:
 `--agent <name>` (repeatable) scopes the run for agents/CI.
 
-### Content single-source-of-truth (wizard ↔ render.com)
+### Remote manifest + live content: designed, built as a stub, removed
 
-Human-facing prose (per-tool next steps, guide links) is the **same content Sanity publishes** at
-`render.com/agents/*.md` — not duplicated in Go. `manifest.json` maps each tool to its content URL;
-`internal/content` fetches it (`Accept: text/markdown`, `?version` aware) with fallbacks **live →
-`go:embed` snapshot (`internal/content/embedded/`) → terse built-in**, so an offline run still
-prints next steps and never blocks on the network. `refresh-content.yml` snapshots the live copy and
-opens a PR on change.
+An earlier design had human-facing prose (per-tool next steps, guide links) live as the **same
+content Sanity publishes** at `render.com/agents/*.md` rather than being duplicated in Go: a
+`manifest.json` mapped each tool to its content URL, `internal/content` fetched it with fallbacks
+**live → `go:embed` snapshot → terse built-in**, and `refresh-content.yml` opened a PR whenever the
+live copy changed.
 
-### Tool extensibility: hardcoded tools, metadata-only manifest
+**None of it was ever wired into the wizard**, and it has been removed. `internal/manifest` never got
+past a stub returning `ErrNotImplemented`; `internal/content` and `internal/logx` had no importer
+outside their own tests. The prose the wizard actually prints is compiled in, via `internal/render`
+(plugin/next-step facts) and `internal/orchestrator/summary.go`. Deleting the three packages plus the
+`manifest/` schema and the refresh workflow also dropped `glamour` and `jsonschema` and their
+transitive trees (chroma, goldmark, bluemonday, …) — roughly a third of the module graph — from a
+binary that users download over the network.
 
-Tools/components are **compiled into the binary** (Go `tools.Target` / `components.Installer`); the
-binary is the authority. The manifest is **metadata only** (name, content URL, default, delivery,
-ordering). Data-driven tool *behavior* was considered and rejected as too expensive.
+What survives from the design is the part that was real: tools and components are **compiled into
+the binary** (`tools.Target` / `components.Installer`), the binary is the authority, and adding a
+tool means writing a `Target` and shipping a release. Data-driven tool *behavior* was considered and
+rejected as too expensive. `internal/orchestrator` still skips IDs it has no compiled handler for
+rather than erroring, which is worth keeping on its own merits even without a manifest to disagree
+with.
 
-Consequences: adding a tool = write a `Target` + ship a release. The JSON schema keeps a **closed
-`id` enum** (author-time typo protection). **Runtime must ignore unknown IDs** — an older binary that
-fetches a newer manifest skips IDs it has no handler for, with a warning, never erroring. Resolves
-schema-enum-vs-forward-compat as **closed schema + must-ignore-unknown runtime**.
+Revisit the fetch-live-content idea only with a caller in hand. The offline fallback it existed to
+provide is moot while the copy is compiled in.
 
 ### Per-tool install facts (researched from render.com/agents/*.md)
 
@@ -216,11 +218,14 @@ The wizard writes config via the shell-automatable **config-file path** for ever
 ## Implementation phases (all complete; detail in git history)
 
 - **Phase 0 — Foundations & contracts:** repo scaffold, CI, frozen `components.Installer` /
-  `tools.Target` interfaces, `manifest` schema v1 + validation test, shared `internal/ids`,
-  artifact/URL and flag conventions.
+  `tools.Target` interfaces, shared `internal/ids`, artifact/URL and flag conventions.
 - **Phase 1 (parallel A–E):** `agents.sh` bootstrap + render.com route template + sync CI (1A);
-  detection + paths + shell PATH (1B); `configedit` merge-not-clobber engine (1C); manifest + content
-  subsystem with embedded fallback (1D); bubbletea TUI skeleton (1E).
+  detection + paths + shell PATH (1B); `configedit` merge-not-clobber engine (1C); bubbletea TUI
+  skeleton (1E).
+
+  Phase 0 also delivered a `manifest` schema and Phase 1D a manifest + content subsystem with an
+  embedded fallback. Neither was ever called by the wizard and both have since been deleted — see
+  "Remote manifest + live content" above.
 - **Phase 2 — installers:** `internal/render` facts; `components/{cli,skills,mcp}`;
   `tools/{claudecode,cursor,codex,opencode}` writing MCP config via `configedit`. Grounded in the
   researched per-tool config shapes.
