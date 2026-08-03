@@ -56,6 +56,12 @@ checksum:
 #     --signature checksums.txt.sig --certificate checksums.txt.pem \
 #     --certificate-identity-regexp '^https://github.com/render-lab/render-install-wizard/' \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#
+# This pipe also runs for snapshots, and it hard-fails when cosign is absent. Pass
+# --skip=sign for any build that is not a real release (as .github/workflows/e2e.yml
+# does, and as a local `goreleaser release --snapshot` needs to) -- keyless signing
+# wants an OIDC identity those builds do not have, and no consumer of a snapshot
+# looks at the signature.
 signs:
   - cmd: cosign
     certificate: "${artifact}.pem"

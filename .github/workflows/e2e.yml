@@ -48,12 +48,17 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
+      # --skip=sign because GoReleaser runs the sign pipe for snapshots too, and
+      # this job has no cosign (only release.yml installs it) and no id-token
+      # permission for keyless signing. Nothing here needs a signature either: the
+      # bootstrap verifies digests, so serving the binaries plus checksums.txt is
+      # the whole fixture.
       - name: Build snapshot artifacts
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --snapshot --clean --skip=publish
+          args: release --snapshot --clean --skip=publish,sign
       - name: Run bootstrap E2E
         run: DIST=dist bash test/e2e/bootstrap_check.sh
       - name: Run failure-injection E2E
